@@ -1,0 +1,59 @@
+# =============================================================================
+# FSAMP Processor - Standalone Docker Compose
+# =============================================================================
+# Use this when running processor independently (without fsamp-infra network).
+# Creates its own LocalStack instance.
+# =============================================================================
+
+services:
+  processor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: fsamp-processor-standalone
+    restart: unless-stopped
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      - ENVIRONMENT=local
+      - LOG_LEVEL=DEBUG
+      - LOG_FORMAT=console
+      - AWS_REGION=us-west-2
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-processing-queue
+      - SNS_TOPIC_ARN=arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
+      - S3_BUCKET_NAME=fsamp-local-files
+      - DYNAMODB_TABLE_NAME=fsamp-local-metadata
+      - KMS_KEY_ID=alias/fsamp-local-master-key
+    networks:
+      - processor-network
+
+  localstack:
+    image: localstack/localstack-pro:4.0
+    container_name: fsamp-processor-ls
+    ports:
+      - "4567:4566"  # Different port to avoid conflict
+    environment:
+      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
+      - AWS_DEFAULT_REGION=us-west-2
+      - SERVICES=s3,sqs,sns,dynamodb,kms,iam,sts
+      - EAGER_SERVICE_LOADING=1
+      - PERSISTENCE=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - processor-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+networks:
+  processor-network:
+    driver: bridge

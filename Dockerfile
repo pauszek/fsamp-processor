@@ -1,0 +1,108 @@
+# =============================================================================
+# FSAMP Processor - Production Dockerfile
+# =============================================================================
+# Multi-stage build for minimal image size and security.
+# Uses Python 3.11 slim image with non-root user.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage 1: Builder
+# -----------------------------------------------------------------------------
+FROM python:3.11-slim-bookworm AS builder
+
+# Set build-time variables
+ARG POETRY_VERSION=1.7.1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy requirements and install dependencies
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY src/ src/
+COPY pyproject.toml .
+
+# Install application
+RUN pip install --no-cache-dir .
+
+# -----------------------------------------------------------------------------
+# Stage 2: Production
+# -----------------------------------------------------------------------------
+FROM python:3.11-slim-bookworm AS production
+
+# Labels
+LABEL maintainer="Pauszek <pauszek@github.io>"
+LABEL org.opencontainers.image.title="FSAMP Processor"
+LABEL org.opencontainers.image.description="Event-driven file processor with FIPS 140-3 compliance"
+LABEL org.opencontainers.image.version="0.1.0"
+
+# Security: Run as non-root user
+RUN groupadd --gid 1000 appgroup && \
+    useradd --uid 1000 --gid appgroup --shell /bin/bash --create-home appuser
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set working directory
+WORKDIR /app
+
+# Copy source code (for debugging/introspection only)
+COPY --chown=appuser:appgroup src/ src/
+
+# Switch to non-root user
+USER appuser
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/src \
+    # Default configuration (override in deployment)
+    ENVIRONMENT=local \
+    LOG_LEVEL=INFO \
+    LOG_FORMAT=json
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import processor; print('healthy')" || exit 1
+
+# Entry point
+ENTRYPOINT ["python", "-m", "processor.main"]
+
+# -----------------------------------------------------------------------------
+# Stage 3: Development (optional, for local testing)
+# -----------------------------------------------------------------------------
+FROM production AS development
+
+USER root
+
+# Install development dependencies
+RUN pip install --no-cache-dir \
+    pytest \
+    pytest-cov \
+    pytest-mock \
+    moto[all]
+
+USER appuser
+
+# Override entrypoint for development
+ENTRYPOINT ["python"]
+CMD ["-m", "processor.main"]

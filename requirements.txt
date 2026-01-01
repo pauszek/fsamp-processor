@@ -1,0 +1,25 @@
+# =============================================================================
+# FSAMP Processor - Production Dependencies
+# =============================================================================
+# Generated from pyproject.toml - use `pip install -e .` for development
+# =============================================================================
+
+# AWS SDK
+boto3>=1.35.0
+botocore>=1.35.0
+
+# Validation & Settings
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
+
+# Cryptography (FIPS 140-3 compliant)
+cryptography>=43.0.0
+
+# Observability
+structlog>=24.4.0
+python-json-logger>=2.0.7
+
+# Utilities
+tenacity>=9.0.0
+python-dateutil>=2.9.0
+orjson>=3.10.0
