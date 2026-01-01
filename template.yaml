@@ -1,0 +1,232 @@
+# =============================================================================
+# AWS SAM Template - Local Lambda Development
+# =============================================================================
+# Use this template for local development and testing with SAM CLI:
+#   sam local invoke ProcessorFunction -e events/sample-sqs-event.json
+#   sam local start-lambda
+# =============================================================================
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  FSAMP Processor - Event-driven file processor Lambda function
+  with FIPS 140-3 compliance for secure file processing.
+
+Globals:
+  Function:
+    Timeout: 300
+    MemorySize: 512
+    Runtime: python3.12
+    Tracing: Active
+    Environment:
+      Variables:
+        POWERTOOLS_SERVICE_NAME: fsamp-processor
+        POWERTOOLS_METRICS_NAMESPACE: FSAMP/Processor
+        POWERTOOLS_LOG_LEVEL: INFO
+
+Parameters:
+  Environment:
+    Type: String
+    Default: local
+    AllowedValues:
+      - local
+      - dev
+      - staging
+      - prod
+    Description: Deployment environment
+
+  SQSQueueArn:
+    Type: String
+    Default: arn:aws:sqs:us-west-2:000000000000:fsamp-local-file-processing
+    Description: ARN of the SQS processing queue
+
+  SNSTopicArn:
+    Type: String
+    Default: arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
+    Description: ARN of the SNS file events topic
+
+  S3BucketName:
+    Type: String
+    Default: fsamp-local-files
+    Description: Name of the S3 files bucket
+
+  DynamoDBTableName:
+    Type: String
+    Default: fsamp-local-file-metadata
+    Description: Name of the DynamoDB metadata table
+
+  KMSKeyId:
+    Type: String
+    Default: alias/fsamp-local-master-key
+    Description: KMS key ID/ARN/alias for encryption
+
+Resources:
+  # ==========================================================================
+  # Lambda Function
+  # ==========================================================================
+  ProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub fsamp-${Environment}-processor
+      Description: FSAMP file processor with FIPS 140-3 compliance
+      CodeUri: .
+      Handler: processor.lambda_handler.lambda_handler
+      
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          AWS_REGION: !Ref AWS::Region
+          SQS_QUEUE_URL: !Sub https://sqs.${AWS::Region}.amazonaws.com/${AWS::AccountId}/fsamp-${Environment}-file-processing
+          SNS_TOPIC_ARN: !Ref SNSTopicArn
+          S3_BUCKET_NAME: !Ref S3BucketName
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          KMS_KEY_ID: !Ref KMSKeyId
+          LOG_LEVEL: !If [IsProd, INFO, DEBUG]
+          LOG_FORMAT: json
+          
+      # Dead Letter Queue
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt ProcessorDLQ.Arn
+      
+      # SQS Event Source (triggers Lambda from queue)
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !Ref SQSQueueArn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 5
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+      
+      # IAM Policies
+      Policies:
+        # S3 Access
+        - S3ReadPolicy:
+            BucketName: !Ref S3BucketName
+        - S3WritePolicy:
+            BucketName: !Ref S3BucketName
+            
+        # DynamoDB Access
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDBTableName
+            
+        # SNS Publish
+        - SNSPublishMessagePolicy:
+            TopicName: !Select [5, !Split [":", !Ref SNSTopicArn]]
+            
+        # KMS Decrypt/Encrypt
+        - KMSDecryptPolicy:
+            KeyId: !Ref KMSKeyId
+        - Statement:
+            - Effect: Allow
+              Action:
+                - kms:Encrypt
+                - kms:GenerateDataKey
+                - kms:GenerateDataKeyWithoutPlaintext
+              Resource: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*
+              
+        # SQS for DLQ
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt ProcessorDLQ.QueueName
+            
+        # X-Ray Tracing
+        - AWSXRayDaemonWriteAccess
+        
+      Tags:
+        Service: processor
+        Environment: !Ref Environment
+        
+    Metadata:
+      BuildMethod: python3.12
+      BuildProperties:
+        UseContainer: true
+
+  # ==========================================================================
+  # Dead Letter Queue
+  # ==========================================================================
+  ProcessorDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub fsamp-${Environment}-processor-dlq
+      MessageRetentionPeriod: 1209600  # 14 days
+      KmsMasterKeyId: alias/aws/sqs
+      Tags:
+        - Key: Service
+          Value: processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==========================================================================
+  # CloudWatch Log Group
+  # ==========================================================================
+  ProcessorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/fsamp-${Environment}-processor
+      RetentionInDays: !If [IsProd, 90, 30]
+      Tags:
+        - Key: Service
+          Value: processor
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ==========================================================================
+  # CloudWatch Alarms
+  # ==========================================================================
+  ProcessorErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub fsamp-${Environment}-processor-errors
+      AlarmDescription: Alert when processor Lambda has errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProcessorFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ProcessorDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub fsamp-${Environment}-processor-dlq
+      AlarmDescription: Alert when messages land in DLQ
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ProcessorDLQ.QueueName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+
+Outputs:
+  ProcessorFunctionArn:
+    Description: Processor Lambda function ARN
+    Value: !GetAtt ProcessorFunction.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-ProcessorFunctionArn
+
+  ProcessorFunctionName:
+    Description: Processor Lambda function name
+    Value: !Ref ProcessorFunction
+
+  DLQUrl:
+    Description: Dead Letter Queue URL
+    Value: !Ref ProcessorDLQ
+
+  DLQArn:
+    Description: Dead Letter Queue ARN
+    Value: !GetAtt ProcessorDLQ.Arn

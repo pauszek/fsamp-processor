@@ -10,7 +10,13 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from processor.domain.events import FileEvent
-from processor.domain.models import AnalysisResult, FileContent, MetadataRecord
+from processor.domain.models import (
+    AnalysisResult,
+    FileContent,
+    MetadataRecord,
+    OutboxEvent,
+    OutboxStatus,
+)
 
 
 class FileStorage(ABC):
@@ -395,4 +401,142 @@ class MetricsCollector(ABC):
         event_type: str,
     ) -> None:
         """Record file processing time."""
+        ...
+
+
+class OutboxRepository(ABC):
+    """
+    Port for Outbox Pattern persistence.
+    Implements the Transactional Outbox Pattern for reliable event publishing.
+    
+    The outbox repository ensures atomicity between business data writes
+    and event recording - both are written in a single transaction.
+    """
+
+    @abstractmethod
+    def save_with_outbox(
+        self,
+        record: MetadataRecord,
+        outbox_event: OutboxEvent,
+    ) -> None:
+        """
+        Save metadata record and outbox event in a single transaction.
+        
+        This is the core of the Outbox Pattern - ensuring atomicity
+        between data persistence and event recording.
+
+        Args:
+            record: The metadata record to save.
+            outbox_event: The event to save to outbox.
+
+        Raises:
+            StorageError: If save fails.
+        """
+        ...
+
+    @abstractmethod
+    def get_pending_events(
+        self,
+        limit: int = 100,
+    ) -> list[OutboxEvent]:
+        """
+        Get pending outbox events for publishing.
+        
+        Used by the outbox publisher to fetch events that need
+        to be published to the message broker.
+
+        Args:
+            limit: Maximum number of events to return.
+
+        Returns:
+            List of pending outbox events, oldest first.
+
+        Raises:
+            StorageError: If query fails.
+        """
+        ...
+
+    @abstractmethod
+    def mark_published(
+        self,
+        event_id: str,
+        aggregate_type: str = "FileProcessing",
+    ) -> None:
+        """
+        Mark an outbox event as published.
+        
+        Called after successfully publishing to the message broker.
+
+        Args:
+            event_id: The event ID to mark.
+            aggregate_type: The aggregate type for the partition key.
+
+        Raises:
+            StorageError: If update fails.
+        """
+        ...
+
+    @abstractmethod
+    def mark_failed(
+        self,
+        event_id: str,
+        error: str,
+        aggregate_type: str = "FileProcessing",
+    ) -> None:
+        """
+        Mark an outbox event as failed.
+        
+        Called when publishing fails, increments retry count.
+
+        Args:
+            event_id: The event ID to mark.
+            error: The error message.
+            aggregate_type: The aggregate type for the partition key.
+
+        Raises:
+            StorageError: If update fails.
+        """
+        ...
+
+    @abstractmethod
+    def get_failed_events(
+        self,
+        limit: int = 100,
+    ) -> list[OutboxEvent]:
+        """
+        Get failed outbox events for retry.
+        
+        Used to retrieve events that failed to publish for retry.
+
+        Args:
+            limit: Maximum number of events to return.
+
+        Returns:
+            List of failed outbox events.
+
+        Raises:
+            StorageError: If query fails.
+        """
+        ...
+
+    @abstractmethod
+    def delete_old_published(
+        self,
+        older_than_hours: int = 24,
+    ) -> int:
+        """
+        Delete old published events (cleanup).
+        
+        DynamoDB TTL should handle this automatically, but this
+        provides manual cleanup capability.
+
+        Args:
+            older_than_hours: Delete events older than this.
+
+        Returns:
+            Number of deleted events.
+
+        Raises:
+            StorageError: If deletion fails.
+        """
         ...

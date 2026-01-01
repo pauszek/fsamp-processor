@@ -1,0 +1,27 @@
+{
+  "Records": [
+    {
+      "messageId": "059f36b4-87a3-44ab-83d2-661975830a7d",
+      "receiptHandle": "AQEBwJnKyrHigUMZj6rYigCgxlaS3SLy0a...",
+      "body": "{\"event_id\":\"evt-12345678-1234-1234-1234-123456789012\",\"event_type\":\"FILE_UPLOADED\",\"correlation_id\":\"corr-12345678-1234-1234-1234-123456789012\",\"timestamp\":\"2024-01-15T10:30:00Z\",\"source\":\"fsamp-gateway\",\"schema_version\":\"1.0.0\",\"file_metadata\":{\"file_id\":\"file-12345678-1234-1234-1234-123456789012\",\"original_filename\":\"document.pdf\",\"content_type\":\"application/pdf\",\"file_size_bytes\":1048576,\"checksum_sha256\":\"a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3\"},\"storage_location\":{\"bucket_name\":\"fsamp-local-files\",\"object_key\":\"uploads/2024/01/15/file-12345678.pdf\",\"region\":\"us-west-2\"},\"security_context\":{\"encryption_algorithm\":\"AES-256-GCM\",\"kms_key_id\":\"alias/fsamp-local-master-key\",\"fips_compliant\":true}}",
+      "attributes": {
+        "ApproximateReceiveCount": "1",
+        "SentTimestamp": "1705316400000",
+        "SenderId": "123456789012",
+        "ApproximateFirstReceiveTimestamp": "1705316400001"
+      },
+      "messageAttributes": {
+        "event_type": {
+          "stringValue": "FILE_UPLOADED",
+          "stringListValues": [],
+          "binaryListValues": [],
+          "dataType": "String"
+        }
+      },
+      "md5OfBody": "9bb58f26192e4ba00f01e2e7b136bbd8",
+      "eventSource": "aws:sqs",
+      "eventSourceARN": "arn:aws:sqs:us-west-2:123456789012:fsamp-local-file-processing",
+      "awsRegion": "us-west-2"
+    }
+  ]
+}

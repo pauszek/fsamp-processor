@@ -1,0 +1,61 @@
+# =============================================================================
+# FSAMP Processor - Lambda Container Image
+# =============================================================================
+# Docker image for AWS Lambda deployment using Lambda Web Adapter or
+# Lambda Container Image support.
+#
+# Build:
+#   docker build -f Dockerfile.lambda -t fsamp-processor-lambda .
+#
+# Local testing with RIE (Runtime Interface Emulator):
+#   docker run -p 9000:8080 fsamp-processor-lambda
+#   curl -X POST "http://localhost:9000/2015-03-31/functions/function/invocations" \
+#     -d @events/sample-sqs-event.json
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage 1: Builder
+# -----------------------------------------------------------------------------
+FROM public.ecr.aws/lambda/python:3.12 AS builder
+
+# Install build dependencies
+RUN dnf install -y gcc python3-devel && \
+    dnf clean all
+
+# Create requirements from pyproject.toml
+WORKDIR /build
+COPY pyproject.toml .
+COPY src/ src/
+
+# Install dependencies to /asset
+RUN pip install --upgrade pip && \
+    pip install --target /asset .
+
+# -----------------------------------------------------------------------------
+# Stage 2: Lambda Runtime
+# -----------------------------------------------------------------------------
+FROM public.ecr.aws/lambda/python:3.12
+
+# Labels
+LABEL maintainer="Pauszek <pauszek@github.io>"
+LABEL org.opencontainers.image.title="FSAMP Processor Lambda"
+LABEL org.opencontainers.image.description="Event-driven file processor Lambda with FIPS 140-3"
+LABEL org.opencontainers.image.version="0.1.0"
+
+# Copy dependencies
+COPY --from=builder /asset ${LAMBDA_TASK_ROOT}
+
+# Copy source code
+COPY src/processor ${LAMBDA_TASK_ROOT}/processor
+
+# Set Lambda handler
+CMD ["processor.lambda_handler.lambda_handler"]
+
+# =============================================================================
+# Environment variables (can be overridden at runtime)
+# =============================================================================
+ENV POWERTOOLS_SERVICE_NAME=fsamp-processor \
+    POWERTOOLS_METRICS_NAMESPACE=FSAMP/Processor \
+    POWERTOOLS_LOG_LEVEL=INFO \
+    LOG_FORMAT=json \
+    ENVIRONMENT=prod

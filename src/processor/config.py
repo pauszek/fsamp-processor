@@ -3,7 +3,7 @@
 # =============================================================================
 """
 Pydantic-based configuration using environment variables.
-Supports both AWS and LocalStack environments.
+Supports both AWS Lambda and LocalStack/ECS environments.
 """
 
 from functools import lru_cache
@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     Application settings loaded from environment variables.
 
     All settings can be overridden via environment variables.
-    Prefix: none (direct mapping).
+    Supports both Lambda and ECS/Container deployments.
     """
 
     model_config = SettingsConfigDict(
@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     environment: Literal["local", "dev", "staging", "prod"] = Field(
         default="local",
         description="Deployment environment",
+    )
+    
+    # -------------------------------------------------------------------------
+    # Lambda-specific settings
+    # -------------------------------------------------------------------------
+    is_lambda: bool = Field(
+        default=False,
+        description="Whether running as AWS Lambda (auto-detected)",
+        alias="AWS_LAMBDA_FUNCTION_NAME",
     )
 
     # -------------------------------------------------------------------------
@@ -60,23 +69,32 @@ class Settings(BaseSettings):
     # Resource Configuration
     # -------------------------------------------------------------------------
     sqs_queue_url: str = Field(
+        default="",
         description="URL of the SQS processing queue",
     )
     sns_topic_arn: str = Field(
+        default="",
         description="ARN of the SNS file events topic",
     )
     s3_bucket_name: str = Field(
+        default="",
         description="Name of the S3 files bucket",
     )
     dynamodb_table_name: str = Field(
+        default="",
         description="Name of the DynamoDB metadata table",
     )
+    outbox_table_name: str = Field(
+        default="",
+        description="Name of the DynamoDB outbox table (Outbox Pattern)",
+    )
     kms_key_id: str = Field(
+        default="",
         description="KMS key ID/ARN/alias for encryption",
     )
 
     # -------------------------------------------------------------------------
-    # SQS Consumer Settings
+    # SQS Consumer Settings (for ECS/Container mode only)
     # -------------------------------------------------------------------------
     sqs_max_messages: int = Field(
         default=10,

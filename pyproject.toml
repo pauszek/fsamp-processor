@@ -27,6 +27,9 @@ dependencies = [
     "boto3>=1.35.0",
     "botocore>=1.35.0",
     
+    # AWS Lambda Powertools (logging, tracing, metrics, batch)
+    "aws-lambda-powertools[tracer,aws-sdk]>=3.3.0",
+    
     # Validation & Settings
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.0",
@@ -69,6 +72,9 @@ test = [
 
 [project.scripts]
 fsamp-processor = "processor.main:main"
+
+[project.entry-points."aws_lambda"]
+handler = "processor.lambda_handler:lambda_handler"
 
 [project.urls]
 Homepage = "https://github.com/pauszek/fsamp-processor"
