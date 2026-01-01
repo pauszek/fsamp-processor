@@ -84,10 +84,11 @@ def get_file_processor() -> FileProcessorService:
     # Load settings
     _settings = get_settings()
     
-    # Create AWS client factory
+    # Create AWS client factory with FIPS support
     aws_factory = AWSClientFactory(
         region=_settings.aws_region,
         endpoint_url=_settings.aws_endpoint_url,
+        use_fips=_settings.should_use_fips,
     )
     
     # Create adapters

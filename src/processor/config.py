@@ -66,6 +66,14 @@ class Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
+    # FIPS 140-3 Compliance
+    # -------------------------------------------------------------------------
+    use_fips_endpoint: bool = Field(
+        default=True,
+        description="Use FIPS 140-3 validated AWS endpoints (requires us-* region)",
+    )
+
+    # -------------------------------------------------------------------------
     # Resource Configuration
     # -------------------------------------------------------------------------
     sqs_queue_url: str = Field(
@@ -172,6 +180,17 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         """Check if running in production environment."""
         return self.environment == "prod"
+
+    @property
+    def should_use_fips(self) -> bool:
+        """
+        Check if FIPS endpoints should be used.
+        
+        FIPS endpoints are only available in us-* regions and not for LocalStack.
+        """
+        if self.is_local or self.aws_endpoint_url:
+            return False
+        return self.use_fips_endpoint and self.aws_region.startswith("us-")
 
     @property
     def use_json_logging(self) -> bool:

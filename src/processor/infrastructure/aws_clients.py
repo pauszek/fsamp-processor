@@ -4,6 +4,11 @@
 """
 Factory for creating AWS clients with proper configuration.
 Supports both real AWS and LocalStack endpoints.
+
+FIPS 140-3 Compliance:
+- Uses FIPS-validated endpoints when available (us-* regions)
+- Configurable via USE_FIPS_ENDPOINT environment variable
+- Automatically disabled for LocalStack
 """
 
 from functools import lru_cache
@@ -32,6 +37,17 @@ DEFAULT_CONFIG = Config(
     read_timeout=30,
 )
 
+# FIPS-enabled config (for us-* regions)
+FIPS_CONFIG = Config(
+    retries={
+        "max_attempts": 3,
+        "mode": "adaptive",
+    },
+    connect_timeout=5,
+    read_timeout=30,
+    use_fips_endpoint=True,
+)
+
 
 class AWSClientFactory:
     """
@@ -39,8 +55,14 @@ class AWSClientFactory:
 
     Handles:
     - LocalStack endpoint configuration
+    - FIPS 140-3 validated endpoints (us-* regions only)
     - Consistent retry and timeout settings
     - Client caching for reuse
+    
+    FIPS 140-3 Compliance:
+    - When use_fips=True and region starts with 'us-', FIPS endpoints are used
+    - FIPS endpoints are validated by NIST for cryptographic operations
+    - KMS FIPS endpoints use HSMs validated to FIPS 140-3 Level 3
     """
 
     def __init__(
@@ -48,6 +70,7 @@ class AWSClientFactory:
         region: str = "us-west-2",
         endpoint_url: str | None = None,
         config: Config | None = None,
+        use_fips: bool = False,
     ) -> None:
         """
         Initialize AWS Client Factory.
@@ -56,17 +79,29 @@ class AWSClientFactory:
             region: AWS region.
             endpoint_url: Custom endpoint URL (e.g., LocalStack).
             config: Custom botocore Config.
+            use_fips: Whether to use FIPS 140-3 validated endpoints.
         """
         self._region = region
         self._endpoint_url = endpoint_url
-        self._config = config or DEFAULT_CONFIG
         self._is_local = endpoint_url is not None
+        
+        # FIPS endpoints are only available in us-* regions and not for LocalStack
+        self._use_fips = use_fips and region.startswith("us-") and not self._is_local
+        
+        # Select appropriate config
+        if config:
+            self._config = config
+        elif self._use_fips:
+            self._config = FIPS_CONFIG
+        else:
+            self._config = DEFAULT_CONFIG
 
         logger.info(
             "AWS Client Factory initialized",
             region=region,
             endpoint_url=endpoint_url or "AWS (default)",
             is_local=self._is_local,
+            fips_enabled=self._use_fips,
         )
 
     def _get_client_kwargs(self) -> dict[str, Any]:

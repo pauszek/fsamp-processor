@@ -68,6 +68,8 @@ test = [
     "pytest-mock>=3.14.0",
     "moto[all]>=5.0.0",
     "localstack-client>=2.6.0",
+    # Contract testing
+    "jsonschema>=4.23.0",
 ]
 
 [project.scripts]
