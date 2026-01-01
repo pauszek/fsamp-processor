@@ -20,3 +20,9 @@ bump:
 release:
   full-release: true
   publish: true
+
+docker:
+  enabled: true
+  image-name: fsamp-processor
+  dockerfile: Dockerfile.lambda
+  registry: ghcr.io
