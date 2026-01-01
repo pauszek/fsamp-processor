@@ -3,24 +3,35 @@
 # =============================================================================
 """
 Shared fixtures for all tests.
+Schema v1.0.0 compliant - FIPS 140-3.
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Generator
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import boto3
 import pytest
 from moto import mock_aws
 
 from processor.domain.events import (
+    EventSource,
     EventType,
     FileEvent,
     FileMetadata,
     SecurityContext,
     StorageLocation,
+    SCHEMA_VERSION,
 )
+
+
+# =============================================================================
+# Test Constants - Schema v1.0.0
+# =============================================================================
+
+SAMPLE_CHECKSUM_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+SAMPLE_KMS_ARN = "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012"
 
 
 # =============================================================================
@@ -166,24 +177,25 @@ def test_kms_key_id(kms_client: boto3.client) -> str:
 # =============================================================================
 
 @pytest.fixture
-def sample_event_id() -> str:
-    """Generate a sample event ID."""
-    return str(uuid4())
+def sample_event_id() -> UUID:
+    """Generate a sample event ID (UUID)."""
+    return uuid4()
 
 
 @pytest.fixture
-def sample_correlation_id() -> str:
-    """Generate a sample correlation ID."""
-    return f"corr-{uuid4().hex[:8]}"
+def sample_correlation_id() -> UUID:
+    """Generate a sample correlation ID (UUID per schema v1.0.0)."""
+    return uuid4()
 
 
 @pytest.fixture
 def sample_file_metadata() -> FileMetadata:
-    """Create sample file metadata."""
+    """Create sample file metadata with SHA-256 checksum (FIPS 180-4)."""
     return FileMetadata(
         original_filename="test-document.pdf",
         file_size_bytes=1024,
         mime_type="application/pdf",
+        checksum_sha256=SAMPLE_CHECKSUM_SHA256,
     )
 
 
@@ -197,28 +209,30 @@ def sample_storage_location(test_bucket: str) -> StorageLocation:
 
 
 @pytest.fixture
-def sample_security_context(test_kms_key_id: str) -> SecurityContext:
-    """Create sample security context."""
+def sample_security_context() -> SecurityContext:
+    """Create sample security context with valid KMS ARN (schema v1.0.0)."""
     return SecurityContext(
         is_encrypted=True,
         encryption_algorithm="AES/GCM/NoPadding",
-        kms_key_id=test_kms_key_id,
+        kms_key_id=SAMPLE_KMS_ARN,
     )
 
 
 @pytest.fixture
 def sample_file_event(
-    sample_event_id: str,
-    sample_correlation_id: str,
+    sample_event_id: UUID,
+    sample_correlation_id: UUID,
     sample_file_metadata: FileMetadata,
     sample_storage_location: StorageLocation,
     sample_security_context: SecurityContext,
 ) -> FileEvent:
-    """Create a sample file event."""
+    """Create a sample file event (schema v1.0.0)."""
     return FileEvent(
+        schema_version=SCHEMA_VERSION,
         event_id=sample_event_id,
         correlation_id=sample_correlation_id,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
+        source=EventSource.PROCESSOR,
         event_type=EventType.FILE_UPLOADED,
         file_metadata=sample_file_metadata,
         storage_location=sample_storage_location,

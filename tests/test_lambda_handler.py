@@ -3,17 +3,27 @@
 # =============================================================================
 """
 Tests for AWS Lambda handler functionality.
+Schema v1.0.0 compliant.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
-from processor.domain.events import EventType, FileEvent, FileMetadata, SecurityContext, StorageLocation
+from processor.domain.events import EventType, FileEvent, FileMetadata, SecurityContext, StorageLocation, SCHEMA_VERSION
 from processor.domain.models import ProcessingResult, ProcessingStatus
+
+
+# =============================================================================
+# Test Constants - Schema v1.0.0
+# =============================================================================
+
+SAMPLE_CHECKSUM_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+SAMPLE_KMS_ARN = "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012"
 
 
 class MockContext:
@@ -45,40 +55,41 @@ def create_sqs_event(file_events: list[dict[str, Any]]) -> dict[str, Any]:
             "messageAttributes": {},
             "md5OfBody": "test",
             "eventSource": "aws:sqs",
-            "eventSourceARN": "arn:aws:sqs:us-west-2:123456789:test-queue",
+            "eventSourceARN": "arn:aws:sqs:us-west-2:123456789012:test-queue",
             "awsRegion": "us-west-2",
         })
     
     return {"Records": records}
 
 
-from uuid import uuid4
-
-
 def create_file_event_dict(
     event_id: str | None = None,
+    correlation_id: str | None = None,
     event_type: str = "FILE_UPLOADED",
     filename: str = "test.pdf",
 ) -> dict[str, Any]:
-    """Create a file event dictionary matching the current schema."""
+    """Create a file event dictionary matching schema v1.0.0."""
     return {
+        "schemaVersion": SCHEMA_VERSION,
         "eventId": str(event_id or uuid4()),
+        "correlationId": str(correlation_id or uuid4()),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": "fsamp-gateway",
         "eventType": event_type,
-        "correlationId": "corr-12345",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
         "fileMetadata": {
             "originalFilename": filename,
             "fileSizeBytes": 1024,
             "mimeType": "application/pdf",
+            "checksumSHA256": SAMPLE_CHECKSUM_SHA256,
         },
         "storageLocation": {
-            "bucketName": "test-bucket",
+            "bucketName": "fsamp-test-bucket",
             "objectKey": f"uploads/{filename}",
         },
         "securityContext": {
             "isEncrypted": True,
             "encryptionAlgorithm": "AES/GCM/NoPadding",
-            "kmsKeyId": "arn:aws:kms:us-west-2:123456789:key/test-key",
+            "kmsKeyId": SAMPLE_KMS_ARN,
         },
     }
 
@@ -92,9 +103,9 @@ class TestLambdaHandler:
         processor = MagicMock()
         processor.handle.return_value = ProcessingResult(
             event_id=str(uuid4()),
-            correlation_id="corr-12345",
+            correlation_id=str(uuid4()),
             status=ProcessingStatus.COMPLETED,
-            started_at=datetime.utcnow(),
+            started_at=datetime.now(timezone.utc),
         )
         return processor
 
@@ -160,21 +171,21 @@ class TestLambdaHandler:
         mock_processor.handle.side_effect = [
             ProcessingResult(
                 event_id=str(uuid4()),
-                correlation_id="corr-0",
+                correlation_id=str(uuid4()),
                 status=ProcessingStatus.COMPLETED,
-                started_at=datetime.utcnow(),
+                started_at=datetime.now(timezone.utc),
             ),
             ProcessingError(
                 message="Test error",
                 event_id=str(uuid4()),
-                correlation_id="corr-1",
+                correlation_id=str(uuid4()),
                 retryable=True,
             ),
             ProcessingResult(
                 event_id=str(uuid4()),
-                correlation_id="corr-2",
+                correlation_id=str(uuid4()),
                 status=ProcessingStatus.COMPLETED,
-                started_at=datetime.utcnow(),
+                started_at=datetime.now(timezone.utc),
             ),
         ]
         mock_get_processor.return_value = mock_processor
@@ -231,9 +242,9 @@ class TestRecordHandler:
         mock_processor = MagicMock()
         mock_processor.handle.return_value = ProcessingResult(
             event_id=str(uuid4()),
-            correlation_id="corr-12345",
+            correlation_id=str(uuid4()),
             status=ProcessingStatus.COMPLETED,
-            started_at=datetime.utcnow(),
+            started_at=datetime.now(timezone.utc),
         )
         mock_get_processor.return_value = mock_processor
         
@@ -246,7 +257,7 @@ class TestRecordHandler:
             "messageAttributes": {},
             "md5OfBody": "test",
             "eventSource": "aws:sqs",
-            "eventSourceARN": "arn:aws:sqs:us-west-2:123456789:test-queue",
+            "eventSourceARN": "arn:aws:sqs:us-west-2:123456789012:test-queue",
             "awsRegion": "us-west-2",
         }
         record = SQSRecord(record_data)
