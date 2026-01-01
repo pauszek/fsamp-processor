@@ -11,6 +11,14 @@ Enterprise Pattern: Contract Testing
 - Single source of truth for event schema (fsamp-event-schema repo)
 - Both producer and consumer validate against same schema
 - Prevents breaking changes in event structure
+- Schema version pinned in schema.version file
+
+Usage:
+    # Download schema first (CI does this automatically)
+    ./scripts/download-schema.sh
+    
+    # Run contract tests
+    pytest tests/contract/
 """
 
 import json
@@ -36,17 +44,33 @@ from processor.domain.events import (
 )
 
 
-# Path to the shared schema (sibling repo in IdeaProjects)
-SCHEMA_PATH = Path(__file__).parent.parent.parent.parent / "fsamp-event-schema" / "event.schema.json"
+# Schema locations (priority order)
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+SCHEMA_PATHS = [
+    PROJECT_ROOT / "schema" / "event.schema.json",  # Downloaded schema (CI & local)
+    PROJECT_ROOT.parent / "fsamp-event-schema" / "event.schema.json",  # Sibling repo (local dev)
+]
+
+
+def _find_schema_path() -> Path | None:
+    """Find the first available schema path."""
+    for path in SCHEMA_PATHS:
+        if path.exists():
+            return path
+    return None
 
 
 @pytest.fixture
 def event_schema() -> dict:
     """Load the shared event schema."""
-    if not SCHEMA_PATH.exists():
-        pytest.skip(f"Event schema not found at {SCHEMA_PATH}")
+    schema_path = _find_schema_path()
+    if schema_path is None:
+        pytest.skip(
+            f"Event schema not found. Run './scripts/download-schema.sh' or ensure "
+            f"fsamp-event-schema repo is available as sibling directory."
+        )
     
-    with open(SCHEMA_PATH) as f:
+    with open(schema_path) as f:
         return json.load(f)
 
 
