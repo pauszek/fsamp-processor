@@ -1,0 +1,12 @@
+name: CI
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+jobs:
+  call-python:
+    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@main
+    secrets: inherit

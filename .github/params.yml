@@ -1,0 +1,22 @@
+# =============================================================================
+# CI/CD Parameters for fsamp-processor
+# =============================================================================
+# Configuration used by reusable workflows from fsamp-code-ci
+
+ci:
+  python-version: "3.11"
+
+files:
+  version: release.version
+
+qodana:
+  enabled: true
+
+bump:
+  enabled: true
+  base-branch: main
+  label: autobump
+
+release:
+  full-release: true
+  publish: true
