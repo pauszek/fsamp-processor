@@ -15,12 +15,10 @@ from processor.ports.outbound import (
 )
 
 __all__ = [
-    # Inbound ports (driving adapters)
-    "EventHandler",
-    "MessageConsumer",
-    # Outbound ports (driven adapters)
-    "FileStorage",
-    "MetadataRepository",
-    "EventPublisher",
     "CryptoProvider",
+    "EventHandler",
+    "EventPublisher",
+    "FileStorage",
+    "MessageConsumer",
+    "MetadataRepository",
 ]

@@ -7,7 +7,6 @@ These are implemented by output adapters (e.g., S3 Client, DynamoDB Repository).
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 from processor.domain.events import FileEvent
 from processor.domain.models import (
@@ -15,7 +14,6 @@ from processor.domain.models import (
     FileContent,
     MetadataRecord,
     OutboxEvent,
-    OutboxStatus,
 )
 
 
@@ -408,7 +406,7 @@ class OutboxRepository(ABC):
     """
     Port for Outbox Pattern persistence.
     Implements the Transactional Outbox Pattern for reliable event publishing.
-    
+
     The outbox repository ensures atomicity between business data writes
     and event recording - both are written in a single transaction.
     """
@@ -421,7 +419,7 @@ class OutboxRepository(ABC):
     ) -> None:
         """
         Save metadata record and outbox event in a single transaction.
-        
+
         This is the core of the Outbox Pattern - ensuring atomicity
         between data persistence and event recording.
 
@@ -441,7 +439,7 @@ class OutboxRepository(ABC):
     ) -> list[OutboxEvent]:
         """
         Get pending outbox events for publishing.
-        
+
         Used by the outbox publisher to fetch events that need
         to be published to the message broker.
 
@@ -464,7 +462,7 @@ class OutboxRepository(ABC):
     ) -> None:
         """
         Mark an outbox event as published.
-        
+
         Called after successfully publishing to the message broker.
 
         Args:
@@ -485,7 +483,7 @@ class OutboxRepository(ABC):
     ) -> None:
         """
         Mark an outbox event as failed.
-        
+
         Called when publishing fails, increments retry count.
 
         Args:
@@ -505,7 +503,7 @@ class OutboxRepository(ABC):
     ) -> list[OutboxEvent]:
         """
         Get failed outbox events for retry.
-        
+
         Used to retrieve events that failed to publish for retry.
 
         Args:
@@ -526,7 +524,7 @@ class OutboxRepository(ABC):
     ) -> int:
         """
         Delete old published events (cleanup).
-        
+
         DynamoDB TTL should handle this automatically, but this
         provides manual cleanup capability.
 

@@ -18,7 +18,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # Schema version for forward compatibility
 SCHEMA_VERSION = "1.0.0"
 
@@ -127,7 +126,7 @@ class StorageLocation(BaseModel):
 class SecurityContext(BaseModel):
     """
     Cryptographic metadata required for FIPS 140-3 compliance.
-    
+
     Only AES-256-GCM is permitted per NIST SP 800-38D.
     All files MUST be encrypted - unencrypted files are rejected.
     """
@@ -162,7 +161,7 @@ class FileEvent(BaseModel):
     """
     Standard event definition for FSAMP platform file processing flow.
     Schema version: 1.0.0
-    
+
     This is the main event schema used for inter-service communication.
     Compliant with FIPS 140-3 cryptographic requirements.
     """
@@ -235,7 +234,7 @@ class FileEvent(BaseModel):
         ),
     ]
 
-    def with_new_event_type(self, event_type: EventType) -> "FileEvent":
+    def with_new_event_type(self, event_type: EventType) -> FileEvent:
         """Create a new event with updated event type (immutable pattern)."""
         return self.model_copy(
             update={

@@ -109,9 +109,7 @@ class TestDynamoDBMetadataRepositoryGetById:
             table_name="test-table",
         )
 
-    def test_get_by_id_success(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_get_by_id_success(self, repo: DynamoDBMetadataRepository) -> None:
         """Test successful get by ID."""
         timestamp = datetime.utcnow().isoformat()
         repo._client.query.return_value = {
@@ -137,9 +135,7 @@ class TestDynamoDBMetadataRepositoryGetById:
         assert record is not None
         assert record.file_id == "file-123"
 
-    def test_get_by_id_not_found(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_get_by_id_not_found(self, repo: DynamoDBMetadataRepository) -> None:
         """Test get by ID when not found."""
         repo._client.query.return_value = {"Items": []}
 
@@ -147,9 +143,7 @@ class TestDynamoDBMetadataRepositoryGetById:
 
         assert record is None
 
-    def test_get_by_id_error(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_get_by_id_error(self, repo: DynamoDBMetadataRepository) -> None:
         """Test get by ID with error."""
         repo._client.query.side_effect = ClientError(
             {"Error": {"Code": "InternalServerError"}},
@@ -172,9 +166,7 @@ class TestDynamoDBMetadataRepositoryGetHistory:
             table_name="test-table",
         )
 
-    def test_get_history_success(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_get_history_success(self, repo: DynamoDBMetadataRepository) -> None:
         """Test successful get history."""
         timestamp = datetime.utcnow().isoformat()
         repo._client.query.return_value = {
@@ -212,9 +204,7 @@ class TestDynamoDBMetadataRepositoryGetHistory:
 
         assert len(records) == 2
 
-    def test_get_history_empty(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_get_history_empty(self, repo: DynamoDBMetadataRepository) -> None:
         """Test get history when empty."""
         repo._client.query.return_value = {"Items": []}
 
@@ -222,9 +212,7 @@ class TestDynamoDBMetadataRepositoryGetHistory:
 
         assert records == []
 
-    def test_get_history_error(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_get_history_error(self, repo: DynamoDBMetadataRepository) -> None:
         """Test get history with error."""
         repo._client.query.side_effect = ClientError(
             {"Error": {"Code": "InternalServerError"}},
@@ -247,17 +235,13 @@ class TestDynamoDBMetadataRepositoryUpdateStatus:
             table_name="test-table",
         )
 
-    def test_update_status_success(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_update_status_success(self, repo: DynamoDBMetadataRepository) -> None:
         """Test successful status update."""
         repo.update_status("file-123", "2024-01-01T00:00:00", "COMPLETED")
 
         repo._client.update_item.assert_called_once()
 
-    def test_update_status_with_error_message(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_update_status_with_error_message(self, repo: DynamoDBMetadataRepository) -> None:
         """Test status update with error message."""
         repo.update_status(
             "file-123",
@@ -278,9 +262,7 @@ class TestDynamoDBMetadataRepositoryUpdateStatus:
         call_kwargs = repo._client.update_item.call_args.kwargs
         assert ":processed" in call_kwargs["ExpressionAttributeValues"]
 
-    def test_update_status_error(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_update_status_error(self, repo: DynamoDBMetadataRepository) -> None:
         """Test status update with error."""
         repo._client.update_item.side_effect = ClientError(
             {"Error": {"Code": "InternalServerError"}},
@@ -303,9 +285,7 @@ class TestDynamoDBMetadataRepositoryQueryByStatus:
             table_name="test-table",
         )
 
-    def test_query_by_status_success(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_query_by_status_success(self, repo: DynamoDBMetadataRepository) -> None:
         """Test successful query by status."""
         timestamp = datetime.utcnow().isoformat()
         repo._client.query.return_value = {
@@ -331,9 +311,7 @@ class TestDynamoDBMetadataRepositoryQueryByStatus:
         assert len(records) == 1
         repo._client.query.assert_called_once()
 
-    def test_query_by_status_empty(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_query_by_status_empty(self, repo: DynamoDBMetadataRepository) -> None:
         """Test query by status when empty."""
         repo._client.query.return_value = {"Items": []}
 
@@ -341,9 +319,7 @@ class TestDynamoDBMetadataRepositoryQueryByStatus:
 
         assert records == []
 
-    def test_query_by_status_error(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_query_by_status_error(self, repo: DynamoDBMetadataRepository) -> None:
         """Test query by status with error."""
         repo._client.query.side_effect = ClientError(
             {"Error": {"Code": "InternalServerError"}},
@@ -366,21 +342,15 @@ class TestDynamoDBMetadataRepositoryIncrementRetryCount:
             table_name="test-table",
         )
 
-    def test_increment_retry_count_success(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_increment_retry_count_success(self, repo: DynamoDBMetadataRepository) -> None:
         """Test successful retry count increment."""
-        repo._client.update_item.return_value = {
-            "Attributes": {"retryCount": {"N": "3"}}
-        }
+        repo._client.update_item.return_value = {"Attributes": {"retryCount": {"N": "3"}}}
 
         count = repo.increment_retry_count("file-123", "2024-01-01T00:00:00")
 
         assert count == 3
 
-    def test_increment_retry_count_error(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_increment_retry_count_error(self, repo: DynamoDBMetadataRepository) -> None:
         """Test retry count increment with error."""
         repo._client.update_item.side_effect = ClientError(
             {"Error": {"Code": "InternalServerError"}},

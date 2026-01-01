@@ -3,8 +3,9 @@
 # =============================================================================
 """Tests for domain models and value objects."""
 
-import pytest
 from datetime import datetime
+
+import pytest
 
 from processor.domain.models import (
     AnalysisResult,

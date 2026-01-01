@@ -3,15 +3,14 @@
 # =============================================================================
 """Tests for SQS Consumer adapter - simplified version without threading issues."""
 
+from datetime import UTC
 from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
 
 from processor.adapters.inbound.sqs_consumer import SQSConsumer
-from processor.domain.events import FileEvent
 from processor.domain.exceptions import (
-    EventValidationError,
     MessageError,
     NonRetryableError,
 )
@@ -335,7 +334,7 @@ class TestSQSConsumerProcessMessage:
     def test_process_message_success(self, mock_signal) -> None:
         """Test successful message processing."""
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
         from uuid import uuid4
 
         client = MagicMock()
@@ -352,7 +351,7 @@ class TestSQSConsumerProcessMessage:
             "schema_version": "1.0.0",
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "source": "fsamp-processor",
             "event_type": "FILE_UPLOADED",
             "file_metadata": {
@@ -419,7 +418,7 @@ class TestSQSConsumerProcessMessage:
     def test_process_message_non_retryable_error(self, mock_signal) -> None:
         """Test message processing with non-retryable error."""
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
         from uuid import uuid4
 
         client = MagicMock()
@@ -436,7 +435,7 @@ class TestSQSConsumerProcessMessage:
             "schema_version": "1.0.0",
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "source": "fsamp-processor",
             "event_type": "FILE_UPLOADED",
             "file_metadata": {
@@ -473,7 +472,7 @@ class TestSQSConsumerProcessMessage:
     def test_process_message_unexpected_error(self, mock_signal) -> None:
         """Test message processing with unexpected error - requeue."""
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
         from uuid import uuid4
 
         client = MagicMock()
@@ -490,7 +489,7 @@ class TestSQSConsumerProcessMessage:
             "schema_version": "1.0.0",
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "source": "fsamp-processor",
             "event_type": "FILE_UPLOADED",
             "file_metadata": {

@@ -279,9 +279,7 @@ class TestS3FileStorageCopy:
     def storage(self) -> S3FileStorage:
         """Create storage for testing."""
         client = MagicMock()
-        client.copy_object.return_value = {
-            "CopyObjectResult": {"ETag": '"copied"'}
-        }
+        client.copy_object.return_value = {"CopyObjectResult": {"ETag": '"copied"'}}
         return S3FileStorage(s3_client=client, default_kms_key_id="test-key")
 
     def test_copy_success(self, storage: S3FileStorage) -> None:

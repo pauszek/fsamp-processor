@@ -60,9 +60,7 @@ class TestKMSCryptoProviderGenerateDataKey:
         }
         return KMSCryptoProvider(kms_client=client, key_id="test-key")
 
-    def test_generate_data_key_success(
-        self, provider: KMSCryptoProvider
-    ) -> None:
+    def test_generate_data_key_success(self, provider: KMSCryptoProvider) -> None:
         """Test successful data key generation."""
         plaintext_key, encrypted_key = provider.generate_data_key()
 
@@ -70,9 +68,7 @@ class TestKMSCryptoProviderGenerateDataKey:
         assert encrypted_key == b"encrypted-key-blob"
         provider._client.generate_data_key.assert_called_once()
 
-    def test_generate_data_key_with_context(
-        self, provider: KMSCryptoProvider
-    ) -> None:
+    def test_generate_data_key_with_context(self, provider: KMSCryptoProvider) -> None:
         """Test data key generation with encryption context."""
         context = {"purpose": "file-encryption"}
         provider.generate_data_key(context=context)
@@ -105,17 +101,13 @@ class TestKMSCryptoProviderDecryptDataKey:
         client.decrypt.return_value = {"Plaintext": b"decrypted-key"}
         return KMSCryptoProvider(kms_client=client, key_id="test-key")
 
-    def test_decrypt_data_key_success(
-        self, provider: KMSCryptoProvider
-    ) -> None:
+    def test_decrypt_data_key_success(self, provider: KMSCryptoProvider) -> None:
         """Test successful data key decryption."""
         result = provider._decrypt_data_key(b"encrypted-key")
 
         assert result == b"decrypted-key"
 
-    def test_decrypt_data_key_with_context(
-        self, provider: KMSCryptoProvider
-    ) -> None:
+    def test_decrypt_data_key_with_context(self, provider: KMSCryptoProvider) -> None:
         """Test data key decryption with context."""
         context = {"purpose": "file-encryption"}
         provider._decrypt_data_key(b"encrypted-key", context=context)
@@ -378,9 +370,7 @@ class TestLocalCryptoProviderEncryptDecrypt:
 
         assert decrypted == plaintext
 
-    def test_encrypt_produces_different_ciphertext(
-        self, provider: LocalCryptoProvider
-    ) -> None:
+    def test_encrypt_produces_different_ciphertext(self, provider: LocalCryptoProvider) -> None:
         """Test that same plaintext produces different ciphertext."""
         plaintext = b"Same message"
 

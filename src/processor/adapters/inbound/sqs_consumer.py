@@ -9,7 +9,8 @@ Implements the MessageConsumer port with long-polling and graceful shutdown.
 import signal
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from botocore.exceptions import ClientError
@@ -48,7 +49,7 @@ class SQSConsumer(MessageConsumer):
 
     def __init__(
         self,
-        sqs_client: "SQSClient",
+        sqs_client: SQSClient,
         queue_url: str,
         handler: Callable[[FileEvent], None],
         max_messages: int = 10,
@@ -88,7 +89,7 @@ class SQSConsumer(MessageConsumer):
             wait_time_seconds=wait_time_seconds,
         )
 
-    def _signal_handler(self, signum: int, frame: Any) -> None:
+    def _signal_handler(self, signum: int, _frame: Any) -> None:
         """Handle shutdown signals gracefully."""
         logger.info("Received shutdown signal", signal=signum)
         self.stop()

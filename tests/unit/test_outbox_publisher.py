@@ -3,7 +3,6 @@
 # =============================================================================
 """Tests for Outbox Publisher Lambda handler."""
 
-import json
 import os
 from unittest.mock import MagicMock, patch
 
@@ -27,40 +26,40 @@ class TestOutboxPublisherHelpers:
     def test_get_sns_client_singleton(self) -> None:
         """Test that SNS client is reused."""
         from processor import outbox_publisher
-        
+
         # Reset singleton
         outbox_publisher._sns_client = None
-        
+
         with patch("processor.outbox_publisher.boto3") as mock_boto:
             mock_client = MagicMock()
             mock_boto.client.return_value = mock_client
-            
+
             client1 = outbox_publisher.get_sns_client()
             client2 = outbox_publisher.get_sns_client()
-            
+
             assert client1 is client2
             mock_boto.client.assert_called_once_with("sns")
-        
+
         # Reset for other tests
         outbox_publisher._sns_client = None
 
     def test_get_dynamodb_client_singleton(self) -> None:
         """Test that DynamoDB client is reused."""
         from processor import outbox_publisher
-        
+
         # Reset singleton
         outbox_publisher._dynamodb_client = None
-        
+
         with patch("processor.outbox_publisher.boto3") as mock_boto:
             mock_client = MagicMock()
             mock_boto.client.return_value = mock_client
-            
+
             client1 = outbox_publisher.get_dynamodb_client()
             client2 = outbox_publisher.get_dynamodb_client()
-            
+
             assert client1 is client2
             mock_boto.client.assert_called_once_with("dynamodb")
-        
+
         # Reset for other tests
         outbox_publisher._dynamodb_client = None
 
@@ -78,7 +77,7 @@ class TestOutboxPublisherRecordHandlerLogic:
         """Test PENDING status detection."""
         new_image = {"status": OutboxStatus.PENDING.value}
         assert new_image.get("status") == OutboxStatus.PENDING.value
-        
+
         new_image = {"status": OutboxStatus.PUBLISHED.value}
         assert new_image.get("status") != OutboxStatus.PENDING.value
 
@@ -103,10 +102,10 @@ class TestOutboxPublisherPublishToSNS:
     def test_publish_to_sns_success(self) -> None:
         """Test successful SNS publishing."""
         from processor import outbox_publisher
-        
+
         mock_sns = MagicMock()
         mock_sns.publish.return_value = {"MessageId": "test-message-id"}
-        
+
         outbox_event = OutboxEvent(
             event_id="test-event-id",
             event_type=OutboxEventType.FILE_PROCESSED,
@@ -114,10 +113,10 @@ class TestOutboxPublisherPublishToSNS:
             aggregate_type="FileProcessing",
             payload={"file_id": "file-123"},
         )
-        
+
         with patch.object(outbox_publisher, "get_sns_client", return_value=mock_sns):
             result = outbox_publisher.publish_to_sns(outbox_event)
-        
+
         assert result == "test-message-id"
         mock_sns.publish.assert_called_once()
 
@@ -137,9 +136,9 @@ class TestOutboxPublisherMarkEventPublished:
     def test_mark_event_published(self) -> None:
         """Test marking event as published."""
         from processor import outbox_publisher
-        
+
         mock_dynamodb = MagicMock()
-        
+
         outbox_event = OutboxEvent(
             event_id="test-event-id",
             event_type=OutboxEventType.FILE_PROCESSED,
@@ -147,10 +146,10 @@ class TestOutboxPublisherMarkEventPublished:
             aggregate_type="FileProcessing",
             payload={"file_id": "file-123"},
         )
-        
+
         with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
             outbox_publisher.mark_event_published(outbox_event)
-        
+
         mock_dynamodb.update_item.assert_called_once()
         call_kwargs = mock_dynamodb.update_item.call_args.kwargs
         assert call_kwargs["TableName"] == "test-outbox"
@@ -171,12 +170,12 @@ class TestOutboxPublisherMarkEventFailed:
     def test_mark_event_failed(self) -> None:
         """Test marking event as failed."""
         from processor import outbox_publisher
-        
+
         mock_dynamodb = MagicMock()
-        
+
         with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
             outbox_publisher.mark_event_failed("test-event-id", "Test error")
-        
+
         mock_dynamodb.update_item.assert_called_once()
         call_kwargs = mock_dynamodb.update_item.call_args.kwargs
         assert ":error" in call_kwargs["ExpressionAttributeValues"]
@@ -184,13 +183,13 @@ class TestOutboxPublisherMarkEventFailed:
     def test_mark_event_failed_truncates_long_error(self) -> None:
         """Test that long error messages are truncated."""
         from processor import outbox_publisher
-        
+
         mock_dynamodb = MagicMock()
         long_error = "x" * 2000
-        
+
         with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
             outbox_publisher.mark_event_failed("test-event-id", long_error)
-        
+
         call_kwargs = mock_dynamodb.update_item.call_args.kwargs
         error_value = call_kwargs["ExpressionAttributeValues"][":error"]["S"]
         assert len(error_value) == 1000
@@ -213,17 +212,17 @@ class TestOutboxPublisherLambdaHandler:
     def test_lambda_handler_env_validation(self) -> None:
         """Test lambda handler validates environment variables."""
         from processor import outbox_publisher
-        
+
         # Test SNS_TOPIC_ARN is used
-        assert outbox_publisher.SNS_TOPIC_ARN == os.environ.get("SNS_TOPIC_ARN", "")
-        
+        assert os.environ.get("SNS_TOPIC_ARN", "") == outbox_publisher.SNS_TOPIC_ARN
+
         # Test OUTBOX_TABLE_NAME is used
-        assert outbox_publisher.OUTBOX_TABLE_NAME == os.environ.get("OUTBOX_TABLE_NAME", "")
+        assert os.environ.get("OUTBOX_TABLE_NAME", "") == outbox_publisher.OUTBOX_TABLE_NAME
 
     def test_lambda_handler_constants(self) -> None:
         """Test lambda handler constants are set."""
         from processor import outbox_publisher
-        
+
         # MAX_RETRY_COUNT should have a default
         assert outbox_publisher.MAX_RETRY_COUNT >= 0
 
@@ -247,15 +246,15 @@ class TestOutboxPublisherRetryHandler:
     def test_retry_handler_no_failed_events(self) -> None:
         """Test retry handler with no failed events."""
         from processor import outbox_publisher
-        
+
         mock_dynamodb = MagicMock()
         mock_dynamodb.query.return_value = {"Items": []}
-        
+
         event = {}
         context = MagicMock()
-        
+
         with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
             result = outbox_publisher.retry_handler(event, context)
-        
+
         assert result["statusCode"] == 200
         assert result["body"]["total_processed"] == 0

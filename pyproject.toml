@@ -92,7 +92,7 @@ where = ["src"]
 # Ruff (Linter + Formatter)
 # =============================================================================
 [tool.ruff]
-target-version = "py311"
+target-version = "py314"
 line-length = 100
 src = ["src", "tests"]
 
@@ -117,7 +117,20 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*" = ["S101", "ARG001"]
+"tests/**/*" = [
+    "S101",   # Allow assert
+    "S105",   # Allow hardcoded passwords (fake AWS creds for moto)
+    "ARG001", # Allow unused arguments (fixtures)
+    "ARG002", # Allow unused method arguments (mocks)
+    "B017",   # Allow blind exceptions
+    "F841",   # Allow unused variables (mock assertions)
+    "E501",   # Allow long lines (SHA256 checksums)
+]
+"src/processor/adapters/outbound/kms_crypto.py" = ["ARG002", "B905"]  # test crypto provider
+"src/processor/adapters/outbound/outbox_repo.py" = ["E501"]  # long DynamoDB expressions
+"src/processor/infrastructure/aws_clients.py" = ["B019"]  # lru_cache on singleton factory methods is intentional
+"src/processor/infrastructure/logging.py" = ["RUF005"]  # list concatenation is clearer here
+"src/processor/outbox_publisher.py" = ["ARG001"]  # Lambda handler signature requires event/context
 
 [tool.ruff.lint.isort]
 known-first-party = ["processor"]

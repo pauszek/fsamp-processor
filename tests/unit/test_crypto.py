@@ -26,9 +26,7 @@ class TestLocalCryptoProvider:
 
         assert decrypted == plaintext
 
-    def test_encrypt_produces_different_ciphertext(
-        self, crypto: LocalCryptoProvider
-    ) -> None:
+    def test_encrypt_produces_different_ciphertext(self, crypto: LocalCryptoProvider) -> None:
         """Test that encrypting same plaintext produces different ciphertext."""
         plaintext = b"Same message"
 
@@ -112,9 +110,7 @@ class TestHashFunctions:
 
         assert hash1 != hash2
 
-    def test_unsupported_algorithm_rejected(
-        self, crypto: LocalCryptoProvider
-    ) -> None:
+    def test_unsupported_algorithm_rejected(self, crypto: LocalCryptoProvider) -> None:
         """Test that non-FIPS algorithms are rejected."""
         with pytest.raises(CryptoError) as exc_info:
             crypto.compute_hash(b"data", "MD5")

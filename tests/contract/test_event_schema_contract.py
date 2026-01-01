@@ -15,25 +15,26 @@ FIPS 140-3 Compliance: Required
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from processor.domain.events import (
+    SCHEMA_VERSION,
     EventSource,
     EventType,
     FileEvent,
     FileMetadata,
     SecurityContext,
     StorageLocation,
-    SCHEMA_VERSION,
 )
 
 # Try to import jsonschema - it's optional but recommended
 try:
     from jsonschema import Draft7Validator, validate
+
     HAS_JSONSCHEMA = True
 except ImportError:
     HAS_JSONSCHEMA = False
@@ -64,7 +65,7 @@ def event_schema() -> dict:
             "Event schema not found. Run './scripts/download-schema.sh' or ensure "
             "fsamp-event-schema repo is available as sibling directory."
         )
-    
+
     with open(schema_path) as f:
         return json.load(f)
 
@@ -78,7 +79,7 @@ def _create_valid_event(
         schema_version=SCHEMA_VERSION,
         event_id=uuid4(),
         correlation_id=uuid4(),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         source=source,
         event_type=event_type,
         file_metadata=FileMetadata(
@@ -121,14 +122,12 @@ class TestEventSchemaContract:
         )
 
     def test_domain_event_matches_schema(
-        self, 
-        event_schema: dict, 
-        sample_file_event: FileEvent
+        self, event_schema: dict, sample_file_event: FileEvent
     ) -> None:
         """
-        Verify that our domain FileEvent model produces JSON 
+        Verify that our domain FileEvent model produces JSON
         that validates against the shared schema.
-        
+
         This is the critical contract test - ensuring our Pydantic
         model produces compatible output with Java Gateway.
         """
@@ -139,7 +138,7 @@ class TestEventSchemaContract:
         """Verify all EventType enum values match schema enum."""
         schema_event_types = set(event_schema["properties"]["eventType"]["enum"])
         domain_event_types = {e.value for e in EventType}
-        
+
         missing = schema_event_types - domain_event_types
         assert not missing, f"Domain missing event types from schema: {missing}"
 
@@ -157,7 +156,7 @@ class TestEventSchemaContract:
             "storageLocation",
             "securityContext",
         }
-        
+
         assert required_fields == expected_required, (
             f"Schema required fields mismatch. "
             f"Expected: {expected_required}, Got: {required_fields}"
@@ -167,7 +166,7 @@ class TestEventSchemaContract:
         """Verify source field only allows valid services."""
         allowed_sources = set(event_schema["properties"]["source"]["enum"])
         expected_sources = {e.value for e in EventSource}
-        
+
         assert allowed_sources == expected_sources, (
             f"Source enum mismatch. Schema: {allowed_sources}, Domain: {expected_sources}"
         )
@@ -197,7 +196,9 @@ class TestFIPSCompliance:
 
     def test_only_aes_gcm_allowed(self, event_schema: dict) -> None:
         """Verify only AES-256-GCM is allowed (NIST SP 800-38D)."""
-        encryption_alg = event_schema["properties"]["securityContext"]["properties"]["encryptionAlgorithm"]
+        encryption_alg = event_schema["properties"]["securityContext"]["properties"][
+            "encryptionAlgorithm"
+        ]
         assert encryption_alg.get("const") == "AES/GCM/NoPadding", (
             "Only AES/GCM/NoPadding should be allowed for FIPS 140-3"
         )
@@ -220,9 +221,7 @@ class TestFIPSCompliance:
         """Verify checksum is valid SHA-256 format (64 hex chars)."""
         checksum = sample_file_event.file_metadata.checksum_sha256
         assert len(checksum) == 64, "SHA-256 must be 64 characters"
-        assert all(c in "0123456789abcdef" for c in checksum), (
-            "SHA-256 must be lowercase hex"
-        )
+        assert all(c in "0123456789abcdef" for c in checksum), "SHA-256 must be lowercase hex"
 
 
 class TestBackwardsCompatibility:
@@ -231,14 +230,14 @@ class TestBackwardsCompatibility:
     def test_correlation_id_must_be_uuid(self) -> None:
         """Verify that correlationId must be UUID (schema v1.0.0 change)."""
         from pydantic import ValidationError
-        
+
         # Old string format - should fail at construction
         with pytest.raises(ValidationError) as exc_info:
             FileEvent(
                 schema_version=SCHEMA_VERSION,
                 event_id=uuid4(),
                 correlation_id="not-a-uuid",  # Invalid - must be UUID
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 source=EventSource.PROCESSOR,
                 event_type=EventType.FILE_UPLOADED,
                 file_metadata=FileMetadata(
@@ -257,18 +256,18 @@ class TestBackwardsCompatibility:
                     kms_key_id="arn:aws:kms:eu-central-1:123456789012:key/12345678-1234-1234-1234-123456789012",
                 ),
             )
-        
+
         assert "correlation_id" in str(exc_info.value).lower()
 
     def test_additional_properties_rejected(self) -> None:
         """Verify that additional unknown properties are rejected (strict mode)."""
         from pydantic import ValidationError
-        
+
         event_data = {
             "schemaVersion": SCHEMA_VERSION,
             "eventId": str(uuid4()),
             "correlationId": str(uuid4()),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "source": "fsamp-processor",
             "eventType": "FILE_UPLOADED",
             "fileMetadata": {
@@ -287,16 +286,16 @@ class TestBackwardsCompatibility:
             },
             "unknownField": "should be rejected",
         }
-        
+
         with pytest.raises(ValidationError) as exc_info:
             FileEvent.model_validate(event_data)
-        
+
         assert "unknownField" in str(exc_info.value)
 
     def test_unencrypted_files_rejected(self) -> None:
         """Verify that unencrypted files are rejected (FIPS requirement)."""
         from pydantic import ValidationError
-        
+
         with pytest.raises(ValidationError):
             SecurityContext(
                 is_encrypted=False,  # Not allowed
@@ -307,7 +306,7 @@ class TestBackwardsCompatibility:
     def test_aes_cbc_rejected(self) -> None:
         """Verify that AES-CBC is rejected (not FIPS 140-3 recommended)."""
         from pydantic import ValidationError
-        
+
         with pytest.raises(ValidationError):
             SecurityContext(
                 is_encrypted=True,
@@ -318,7 +317,7 @@ class TestBackwardsCompatibility:
     def test_file_size_max_100mb(self) -> None:
         """Verify file size is capped at 100MB."""
         from pydantic import ValidationError
-        
+
         with pytest.raises(ValidationError):
             FileMetadata(
                 original_filename="huge.pdf",
@@ -335,12 +334,12 @@ class TestSchemaValidation:
     def test_invalid_event_type_rejected(self, event_schema: dict) -> None:
         """Verify invalid event type is rejected by schema."""
         from jsonschema import ValidationError as JsonSchemaError
-        
+
         invalid_json = {
             "schemaVersion": "1.0.0",
             "eventId": str(uuid4()),
             "correlationId": str(uuid4()),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "source": "fsamp-processor",
             "eventType": "INVALID_TYPE",  # Not in enum
             "fileMetadata": {
@@ -358,7 +357,7 @@ class TestSchemaValidation:
                 "kmsKeyId": "arn:aws:kms:eu-central-1:123456789012:key/12345678-1234-1234-1234-123456789012",
             },
         }
-        
+
         with pytest.raises(JsonSchemaError):
             validate(instance=invalid_json, schema=event_schema)
 
@@ -366,12 +365,12 @@ class TestSchemaValidation:
     def test_missing_source_rejected(self, event_schema: dict) -> None:
         """Verify missing source field is rejected by schema."""
         from jsonschema import ValidationError as JsonSchemaError
-        
+
         invalid_json = {
             "schemaVersion": "1.0.0",
             "eventId": str(uuid4()),
             "correlationId": str(uuid4()),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             # "source" is missing
             "eventType": "FILE_UPLOADED",
             "fileMetadata": {
@@ -389,6 +388,6 @@ class TestSchemaValidation:
                 "kmsKeyId": "arn:aws:kms:eu-central-1:123456789012:key/12345678-1234-1234-1234-123456789012",
             },
         }
-        
+
         with pytest.raises(JsonSchemaError):
             validate(instance=invalid_json, schema=event_schema)

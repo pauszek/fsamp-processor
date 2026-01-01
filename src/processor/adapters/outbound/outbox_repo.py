@@ -43,19 +43,19 @@ logger = structlog.get_logger(__name__)
 class DynamoDBOutboxRepository(OutboxRepository):
     """
     DynamoDB implementation of Outbox Repository.
-    
+
     Uses DynamoDB transactions for atomic writes of metadata and outbox events.
     The outbox events are stored in a separate table that triggers DynamoDB Streams
     for the outbox publisher Lambda.
-    
+
     Table Design (single-table design for metadata, separate for outbox):
-    
+
     Metadata Table:
         PK: FILE#<file_id>
         SK: TS#<timestamp>
         GSI1PK: STATUS#<status>
         GSI1SK: <timestamp>
-    
+
     Outbox Table:
         PK: OUTBOX#<aggregate_type>
         SK: EVENT#<event_id>
@@ -98,7 +98,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
     ) -> None:
         """
         Save metadata record and outbox event in a single transaction.
-        
+
         This uses DynamoDB TransactWriteItems to ensure atomicity.
         Either both writes succeed, or both fail.
         """
@@ -141,7 +141,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
 
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
-            
+
             if error_code == "TransactionCanceledException":
                 # Check cancellation reasons
                 reasons = e.response.get("CancellationReasons", [])
@@ -149,12 +149,12 @@ class DynamoDBOutboxRepository(OutboxRepository):
                     "Transaction cancelled",
                     reasons=[r.get("Code") for r in reasons],
                 )
-                
+
                 # If it's a conditional check failure on metadata, item already exists
                 if any(r.get("Code") == "ConditionalCheckFailed" for r in reasons):
                     log.info("Metadata record already exists, likely duplicate event")
                     return
-            
+
             log.exception("Failed to save with outbox")
             raise StorageError(
                 message=f"Failed to save with outbox: {e}",
@@ -229,8 +229,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
                     "SK": {"S": f"EVENT#{event_id}"},
                 },
                 UpdateExpression=(
-                    "SET #status = :status, publishedAt = :published, "
-                    "GSI1PK = :gsi1pk, #ttl = :ttl"
+                    "SET #status = :status, publishedAt = :published, GSI1PK = :gsi1pk, #ttl = :ttl"
                 ),
                 ExpressionAttributeNames={
                     "#status": "status",
@@ -350,7 +349,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
     ) -> int:
         """
         Delete old published events (manual cleanup).
-        
+
         Note: DynamoDB TTL should handle this automatically,
         but this provides manual cleanup capability.
         """
@@ -358,9 +357,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
         deleted_count = 0
 
         try:
-            cutoff = (
-                datetime.utcnow() - timedelta(hours=older_than_hours)
-            ).isoformat()
+            cutoff = (datetime.utcnow() - timedelta(hours=older_than_hours)).isoformat()
 
             # Query published events older than cutoff
             response = self._client.query(
@@ -379,7 +376,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
 
             # Batch delete (max 25 per batch)
             for i in range(0, len(items), 25):
-                batch = items[i:i + 25]
+                batch = items[i : i + 25]
                 delete_requests = [
                     {
                         "DeleteRequest": {
@@ -393,9 +390,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
                 ]
 
                 self._client.batch_write_item(
-                    RequestItems={
-                        self._outbox_table_name: delete_requests
-                    }
+                    RequestItems={self._outbox_table_name: delete_requests}
                 )
                 deleted_count += len(batch)
 
@@ -422,7 +417,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
     ) -> None:
         """
         Update existing metadata and add outbox event atomically.
-        
+
         Used for status updates that also need to emit events.
         """
         log = logger.bind(

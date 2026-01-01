@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from processor.infrastructure.aws_clients import (
-    AWSClientFactory,
     DEFAULT_CONFIG,
     FIPS_CONFIG,
+    AWSClientFactory,
 )
 
 

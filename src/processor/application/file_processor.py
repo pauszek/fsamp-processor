@@ -25,7 +25,6 @@ from processor.domain.models import (
     FileContent,
     MetadataRecord,
     OutboxEvent,
-    OutboxEventType,
     ProcessingResult,
     ProcessingStatus,
 )
@@ -188,7 +187,7 @@ class FileProcessorService:
         timestamp = datetime.utcnow().isoformat()
         metadata_record = self._create_metadata_record(event, timestamp)
         metadata_record.status = ProcessingStatus.IN_PROGRESS
-        
+
         # Save initial status (non-transactional, just metadata)
         self._metadata.save(metadata_record)
         log.debug("Initial metadata record saved")

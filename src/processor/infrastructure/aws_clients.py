@@ -58,7 +58,7 @@ class AWSClientFactory:
     - FIPS 140-3 validated endpoints (us-* regions only)
     - Consistent retry and timeout settings
     - Client caching for reuse
-    
+
     FIPS 140-3 Compliance:
     - When use_fips=True and region starts with 'us-', FIPS endpoints are used
     - FIPS endpoints are validated by NIST for cryptographic operations
@@ -84,10 +84,10 @@ class AWSClientFactory:
         self._region = region
         self._endpoint_url = endpoint_url
         self._is_local = endpoint_url is not None
-        
+
         # FIPS endpoints are only available in us-* regions and not for LocalStack
         self._use_fips = use_fips and region.startswith("us-") and not self._is_local
-        
+
         # Select appropriate config
         if config:
             self._config = config
@@ -117,31 +117,31 @@ class AWSClientFactory:
         return kwargs
 
     @lru_cache(maxsize=1)
-    def get_s3_client(self) -> "S3Client":
+    def get_s3_client(self) -> S3Client:
         """Get cached S3 client."""
         logger.debug("Creating S3 client")
         return boto3.client("s3", **self._get_client_kwargs())
 
     @lru_cache(maxsize=1)
-    def get_sqs_client(self) -> "SQSClient":
+    def get_sqs_client(self) -> SQSClient:
         """Get cached SQS client."""
         logger.debug("Creating SQS client")
         return boto3.client("sqs", **self._get_client_kwargs())
 
     @lru_cache(maxsize=1)
-    def get_sns_client(self) -> "SNSClient":
+    def get_sns_client(self) -> SNSClient:
         """Get cached SNS client."""
         logger.debug("Creating SNS client")
         return boto3.client("sns", **self._get_client_kwargs())
 
     @lru_cache(maxsize=1)
-    def get_dynamodb_client(self) -> "DynamoDBClient":
+    def get_dynamodb_client(self) -> DynamoDBClient:
         """Get cached DynamoDB client."""
         logger.debug("Creating DynamoDB client")
         return boto3.client("dynamodb", **self._get_client_kwargs())
 
     @lru_cache(maxsize=1)
-    def get_kms_client(self) -> "KMSClient":
+    def get_kms_client(self) -> KMSClient:
         """Get cached KMS client."""
         logger.debug("Creating KMS client")
         return boto3.client("kms", **self._get_client_kwargs())

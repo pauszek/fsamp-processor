@@ -4,8 +4,7 @@
 """Tests for File Processor Application Service."""
 
 from datetime import datetime
-from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,9 +17,6 @@ from processor.domain.exceptions import (
 )
 from processor.domain.models import (
     FileContent,
-    MetadataRecord,
-    OutboxEvent,
-    ProcessingResult,
     ProcessingStatus,
 )
 
@@ -83,7 +79,7 @@ class TestFileProcessorServiceHandle:
         publisher = MagicMock()
         crypto = MagicMock()
         outbox = MagicMock()
-        
+
         # Default mock returns
         storage.download.return_value = FileContent(
             data=b"%PDF-1.4 Sample content",
@@ -91,7 +87,7 @@ class TestFileProcessorServiceHandle:
             content_length=100,
         )
         crypto.compute_hash.return_value = "abc123hash"
-        
+
         return {
             "storage": storage,
             "metadata": metadata,
@@ -130,18 +126,12 @@ class TestFileProcessorServiceHandle:
         assert result.status == ProcessingStatus.COMPLETED
         service._outbox.save_with_outbox.assert_called_once()
 
-    def test_handle_file_too_large(
-        self, mock_dependencies, sample_file_event: FileEvent
-    ) -> None:
+    def test_handle_file_too_large(self, mock_dependencies, sample_file_event: FileEvent) -> None:
         """Test handling file that exceeds size limit."""
         from processor.domain.events import (
             FileMetadata,
-            StorageLocation,
-            SecurityContext,
-            EventSource,
-            EventType,
         )
-        
+
         # Create event with large file size
         large_file_event = FileEvent(
             schema_version=sample_file_event.schema_version,
@@ -159,7 +149,7 @@ class TestFileProcessorServiceHandle:
             storage_location=sample_file_event.storage_location,
             security_context=sample_file_event.security_context,
         )
-        
+
         # Create service with small max file size
         service = FileProcessorService(
             file_storage=mock_dependencies["storage"],
@@ -255,14 +245,14 @@ class TestFileProcessorServiceProcessUploadedFile:
         publisher = MagicMock()
         crypto = MagicMock()
         outbox = MagicMock()
-        
+
         storage.download.return_value = FileContent(
             data=b"%PDF-1.4 Sample content",
             content_type="application/pdf",
             content_length=100,
         )
         crypto.compute_hash.return_value = "abc123hash"
-        
+
         return {
             "storage": storage,
             "metadata": metadata,
@@ -316,7 +306,7 @@ class TestFileProcessorServiceAnalyzeFile:
         publisher = MagicMock()
         crypto = MagicMock()
         crypto.compute_hash.return_value = "test-hash"
-        
+
         return FileProcessorService(
             file_storage=storage,
             metadata_repo=metadata,
@@ -335,7 +325,9 @@ class TestFileProcessorServiceAnalyzeFile:
 
     def test_analyze_file_pe_executable(self, service: FileProcessorService) -> None:
         """Test analysis detects PE executable."""
-        content = FileContent(data=b"MZ" + b"\x00" * 100, content_type="application/octet-stream", content_length=102)
+        content = FileContent(
+            data=b"MZ" + b"\x00" * 100, content_type="application/octet-stream", content_length=102
+        )
         log = MagicMock()
 
         result = service._analyze_file(content, log)
@@ -345,7 +337,11 @@ class TestFileProcessorServiceAnalyzeFile:
 
     def test_analyze_file_elf_executable(self, service: FileProcessorService) -> None:
         """Test analysis detects ELF executable."""
-        content = FileContent(data=b"\x7fELF" + b"\x00" * 100, content_type="application/octet-stream", content_length=104)
+        content = FileContent(
+            data=b"\x7fELF" + b"\x00" * 100,
+            content_type="application/octet-stream",
+            content_length=104,
+        )
         log = MagicMock()
 
         result = service._analyze_file(content, log)
@@ -355,7 +351,9 @@ class TestFileProcessorServiceAnalyzeFile:
 
     def test_analyze_file_pdf(self, service: FileProcessorService) -> None:
         """Test analysis of PDF file."""
-        content = FileContent(data=b"%PDF-1.4" + b"\x00" * 100, content_type="application/pdf", content_length=108)
+        content = FileContent(
+            data=b"%PDF-1.4" + b"\x00" * 100, content_type="application/pdf", content_length=108
+        )
         log = MagicMock()
 
         result = service._analyze_file(content, log)
@@ -475,14 +473,14 @@ class TestFileProcessorServiceDirectPublishing:
         metadata = MagicMock()
         publisher = MagicMock()
         crypto = MagicMock()
-        
+
         storage.download.return_value = FileContent(
             data=b"Test content",
             content_type="text/plain",
             content_length=12,
         )
         crypto.compute_hash.return_value = "test-hash"
-        
+
         return {
             "storage": storage,
             "metadata": metadata,
@@ -490,9 +488,7 @@ class TestFileProcessorServiceDirectPublishing:
             "crypto": crypto,
         }
 
-    def test_direct_publishing_mode(
-        self, mock_dependencies, sample_file_event: FileEvent
-    ) -> None:
+    def test_direct_publishing_mode(self, mock_dependencies, sample_file_event: FileEvent) -> None:
         """Test direct publishing mode."""
         service = FileProcessorService(
             file_storage=mock_dependencies["storage"],

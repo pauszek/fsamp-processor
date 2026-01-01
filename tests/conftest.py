@@ -7,8 +7,8 @@ Schema v1.0.0 compliant - FIPS 140-3.
 """
 
 import os
-from datetime import datetime, timezone
-from typing import Generator
+from collections.abc import Generator
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import boto3
@@ -16,15 +16,14 @@ import pytest
 from moto import mock_aws
 
 from processor.domain.events import (
+    SCHEMA_VERSION,
     EventSource,
     EventType,
     FileEvent,
     FileMetadata,
     SecurityContext,
     StorageLocation,
-    SCHEMA_VERSION,
 )
-
 
 # =============================================================================
 # Test Constants - Schema v1.0.0
@@ -37,6 +36,7 @@ SAMPLE_KMS_ARN = "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234
 # =============================================================================
 # Environment Setup
 # =============================================================================
+
 
 @pytest.fixture(autouse=True)
 def aws_credentials() -> None:
@@ -52,8 +52,9 @@ def aws_credentials() -> None:
 # AWS Mock Fixtures
 # =============================================================================
 
+
 @pytest.fixture
-def mock_aws_services() -> Generator[None, None, None]:
+def mock_aws_services() -> Generator[None]:
     """Start all AWS mocks."""
     with mock_aws():
         yield
@@ -103,6 +104,7 @@ def kms_client(mock_aws_services: None) -> boto3.client:
 # Resource Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def test_bucket(s3_client: boto3.client) -> str:
     """Return the test bucket name."""
@@ -133,7 +135,7 @@ def test_topic_arn(sns_client: boto3.client) -> str:
 def test_table_name(dynamodb_client: boto3.client) -> str:
     """Create a test DynamoDB table and return its name."""
     table_name = "test-metadata"
-    
+
     dynamodb_client.create_table(
         TableName=table_name,
         KeySchema=[
@@ -158,7 +160,7 @@ def test_table_name(dynamodb_client: boto3.client) -> str:
         ],
         BillingMode="PAY_PER_REQUEST",
     )
-    
+
     return table_name
 
 
@@ -175,6 +177,7 @@ def test_kms_key_id(kms_client: boto3.client) -> str:
 # =============================================================================
 # Domain Object Fixtures
 # =============================================================================
+
 
 @pytest.fixture
 def sample_event_id() -> UUID:
@@ -231,7 +234,7 @@ def sample_file_event(
         schema_version=SCHEMA_VERSION,
         event_id=sample_event_id,
         correlation_id=sample_correlation_id,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         source=EventSource.PROCESSOR,
         event_type=EventType.FILE_UPLOADED,
         file_metadata=sample_file_metadata,

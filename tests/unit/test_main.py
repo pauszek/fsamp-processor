@@ -26,9 +26,13 @@ class TestCreateApplication:
         os.environ["AWS_ENDPOINT_URL"] = "http://localhost:4566"
         yield
         for key in [
-            "AWS_REGION", "SQS_QUEUE_URL", "SNS_TOPIC_ARN",
-            "DYNAMODB_TABLE_NAME", "KMS_KEY_ID", "S3_BUCKET_NAME",
-            "AWS_ENDPOINT_URL"
+            "AWS_REGION",
+            "SQS_QUEUE_URL",
+            "SNS_TOPIC_ARN",
+            "DYNAMODB_TABLE_NAME",
+            "KMS_KEY_ID",
+            "S3_BUCKET_NAME",
+            "AWS_ENDPOINT_URL",
         ]:
             os.environ.pop(key, None)
 
@@ -55,7 +59,11 @@ class TestCreateApplication:
         # Setup mocks
         mock_factory_instance = MagicMock()
         mock_factory_instance.verify_connectivity.return_value = {
-            "s3": True, "sqs": True, "sns": True, "dynamodb": True, "kms": True
+            "s3": True,
+            "sqs": True,
+            "sns": True,
+            "dynamodb": True,
+            "kms": True,
         }
         mock_factory.return_value = mock_factory_instance
 
@@ -87,7 +95,11 @@ class TestCreateApplication:
 
         mock_factory_instance = MagicMock()
         mock_factory_instance.verify_connectivity.return_value = {
-            "s3": False, "sqs": True, "sns": True, "dynamodb": True, "kms": True
+            "s3": False,
+            "sqs": True,
+            "sns": True,
+            "dynamodb": True,
+            "kms": True,
         }
         mock_factory.return_value = mock_factory_instance
 
@@ -122,7 +134,11 @@ class TestCreateApplication:
 
         mock_factory_instance = MagicMock()
         mock_factory_instance.verify_connectivity.return_value = {
-            "s3": True, "sqs": True, "sns": True, "dynamodb": True, "kms": True
+            "s3": True,
+            "sqs": True,
+            "sns": True,
+            "dynamodb": True,
+            "kms": True,
         }
         mock_factory.return_value = mock_factory_instance
 
@@ -160,9 +176,14 @@ class TestMain:
         os.environ["LOG_LEVEL"] = "INFO"
         yield
         for key in [
-            "AWS_REGION", "SQS_QUEUE_URL", "SNS_TOPIC_ARN",
-            "DYNAMODB_TABLE_NAME", "KMS_KEY_ID", "S3_BUCKET_NAME",
-            "AWS_ENDPOINT_URL", "LOG_LEVEL"
+            "AWS_REGION",
+            "SQS_QUEUE_URL",
+            "SNS_TOPIC_ARN",
+            "DYNAMODB_TABLE_NAME",
+            "KMS_KEY_ID",
+            "S3_BUCKET_NAME",
+            "AWS_ENDPOINT_URL",
+            "LOG_LEVEL",
         ]:
             os.environ.pop(key, None)
 

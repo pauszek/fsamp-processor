@@ -15,7 +15,6 @@ from processor.domain.models import (
     MetadataRecord,
     OutboxEvent,
     OutboxEventType,
-    OutboxStatus,
     ProcessingStatus,
 )
 
@@ -136,9 +135,7 @@ class TestDynamoDBOutboxRepositoryGetPendingEvents:
             outbox_table_name="outbox-table",
         )
 
-    def test_get_pending_events_success(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_get_pending_events_success(self, repo: DynamoDBOutboxRepository) -> None:
         """Test getting pending events."""
         repo._client.query.return_value = {
             "Items": [
@@ -161,9 +158,7 @@ class TestDynamoDBOutboxRepositoryGetPendingEvents:
         assert len(events) == 1
         repo._client.query.assert_called_once()
 
-    def test_get_pending_events_empty(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_get_pending_events_empty(self, repo: DynamoDBOutboxRepository) -> None:
         """Test getting pending events when none exist."""
         repo._client.query.return_value = {"Items": []}
 
@@ -171,9 +166,7 @@ class TestDynamoDBOutboxRepositoryGetPendingEvents:
 
         assert events == []
 
-    def test_get_pending_events_error(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_get_pending_events_error(self, repo: DynamoDBOutboxRepository) -> None:
         """Test getting pending events with error."""
         repo._client.query.side_effect = ClientError(
             {"Error": {"Code": "InternalServerError"}},
@@ -197,9 +190,7 @@ class TestDynamoDBOutboxRepositoryMarkPublished:
             outbox_table_name="outbox-table",
         )
 
-    def test_mark_published_success(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_mark_published_success(self, repo: DynamoDBOutboxRepository) -> None:
         """Test marking event as published."""
         repo.mark_published("event-123")
 
@@ -208,9 +199,7 @@ class TestDynamoDBOutboxRepositoryMarkPublished:
         assert call_kwargs["TableName"] == "outbox-table"
         assert ":status" in call_kwargs["ExpressionAttributeValues"]
 
-    def test_mark_published_with_aggregate_type(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_mark_published_with_aggregate_type(self, repo: DynamoDBOutboxRepository) -> None:
         """Test marking event as published with custom aggregate type."""
         repo.mark_published("event-123", aggregate_type="CustomType")
 
@@ -218,9 +207,7 @@ class TestDynamoDBOutboxRepositoryMarkPublished:
         key = call_kwargs["Key"]
         assert key["PK"]["S"] == "OUTBOX#CustomType"
 
-    def test_mark_published_error(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_mark_published_error(self, repo: DynamoDBOutboxRepository) -> None:
         """Test marking event with error."""
         repo._client.update_item.side_effect = ClientError(
             {"Error": {"Code": "InternalServerError"}},
@@ -244,9 +231,7 @@ class TestDynamoDBOutboxRepositoryMarkFailed:
             outbox_table_name="outbox-table",
         )
 
-    def test_mark_failed_success(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_mark_failed_success(self, repo: DynamoDBOutboxRepository) -> None:
         """Test marking event as failed."""
         repo.mark_failed("event-123", "Test error message")
 
@@ -255,9 +240,7 @@ class TestDynamoDBOutboxRepositoryMarkFailed:
         assert ":error" in call_kwargs["ExpressionAttributeValues"]
         assert ":status" in call_kwargs["ExpressionAttributeValues"]
 
-    def test_mark_failed_with_aggregate_type(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_mark_failed_with_aggregate_type(self, repo: DynamoDBOutboxRepository) -> None:
         """Test marking event as failed with custom aggregate type."""
         repo.mark_failed("event-123", "Error", aggregate_type="CustomType")
 
@@ -265,9 +248,7 @@ class TestDynamoDBOutboxRepositoryMarkFailed:
         key = call_kwargs["Key"]
         assert key["PK"]["S"] == "OUTBOX#CustomType"
 
-    def test_mark_failed_error(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_mark_failed_error(self, repo: DynamoDBOutboxRepository) -> None:
         """Test marking event failed with error."""
         repo._client.update_item.side_effect = ClientError(
             {"Error": {"Code": "InternalServerError"}},
@@ -291,9 +272,7 @@ class TestDynamoDBOutboxRepositoryGetFailedEvents:
             outbox_table_name="outbox-table",
         )
 
-    def test_get_failed_events_success(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_get_failed_events_success(self, repo: DynamoDBOutboxRepository) -> None:
         """Test getting failed events."""
         repo._client.query.return_value = {
             "Items": [
@@ -317,9 +296,7 @@ class TestDynamoDBOutboxRepositoryGetFailedEvents:
         assert len(events) == 1
         repo._client.query.assert_called_once()
 
-    def test_get_failed_events_empty(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_get_failed_events_empty(self, repo: DynamoDBOutboxRepository) -> None:
         """Test getting failed events when none exist."""
         repo._client.query.return_value = {"Items": []}
 
@@ -327,9 +304,7 @@ class TestDynamoDBOutboxRepositoryGetFailedEvents:
 
         assert events == []
 
-    def test_get_failed_events_error(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_get_failed_events_error(self, repo: DynamoDBOutboxRepository) -> None:
         """Test getting failed events with error."""
         repo._client.query.side_effect = ClientError(
             {"Error": {"Code": "InternalServerError"}},
@@ -353,9 +328,7 @@ class TestDynamoDBOutboxRepositoryDeleteOldPublished:
             outbox_table_name="outbox-table",
         )
 
-    def test_delete_old_published_success(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_delete_old_published_success(self, repo: DynamoDBOutboxRepository) -> None:
         """Test deleting old published events."""
         repo._client.query.return_value = {
             "Items": [
@@ -369,9 +342,7 @@ class TestDynamoDBOutboxRepositoryDeleteOldPublished:
         assert deleted == 2
         repo._client.batch_write_item.assert_called_once()
 
-    def test_delete_old_published_no_events(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_delete_old_published_no_events(self, repo: DynamoDBOutboxRepository) -> None:
         """Test deleting when no old events exist."""
         repo._client.query.return_value = {"Items": []}
 
@@ -380,9 +351,7 @@ class TestDynamoDBOutboxRepositoryDeleteOldPublished:
         assert deleted == 0
         repo._client.batch_write_item.assert_not_called()
 
-    def test_delete_old_published_error(
-        self, repo: DynamoDBOutboxRepository
-    ) -> None:
+    def test_delete_old_published_error(self, repo: DynamoDBOutboxRepository) -> None:
         """Test delete with error."""
         repo._client.query.side_effect = ClientError(
             {"Error": {"Code": "InternalServerError"}},

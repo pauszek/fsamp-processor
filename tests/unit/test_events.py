@@ -3,23 +3,22 @@
 # =============================================================================
 """Tests for Pydantic event models following schema v1.0.0."""
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
 from pydantic import ValidationError
 
 from processor.domain.events import (
+    SCHEMA_VERSION,
     EventSource,
     EventType,
     FileEvent,
     FileMetadata,
     SecurityContext,
-    StorageLocation,
     SQSMessageWrapper,
-    SCHEMA_VERSION,
+    StorageLocation,
 )
-
 
 # ============================================================================
 # Test Fixtures - Schema v1.0.0 compliant
@@ -58,7 +57,7 @@ def create_valid_event_data() -> dict:
         "schemaVersion": SCHEMA_VERSION,
         "eventId": str(uuid4()),
         "correlationId": str(uuid4()),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "source": "fsamp-processor",
         "eventType": "FILE_UPLOADED",
         "fileMetadata": {
@@ -93,12 +92,14 @@ class TestFileMetadata:
 
     def test_metadata_from_camel_case(self) -> None:
         """Test creating metadata from camelCase keys (JSON)."""
-        metadata = FileMetadata.model_validate({
-            "originalFilename": "test.txt",
-            "fileSizeBytes": 500,
-            "mimeType": "text/plain",
-            "checksumSHA256": SAMPLE_CHECKSUM,
-        })
+        metadata = FileMetadata.model_validate(
+            {
+                "originalFilename": "test.txt",
+                "fileSizeBytes": 500,
+                "mimeType": "text/plain",
+                "checksumSHA256": SAMPLE_CHECKSUM,
+            }
+        )
 
         assert metadata.original_filename == "test.txt"
         assert metadata.file_size_bytes == 500
@@ -159,10 +160,12 @@ class TestStorageLocation:
 
     def test_location_from_camel_case(self) -> None:
         """Test creating location from camelCase keys."""
-        location = StorageLocation.model_validate({
-            "bucketName": "fsamp-bucket",
-            "objectKey": "test/key.txt",
-        })
+        location = StorageLocation.model_validate(
+            {
+                "bucketName": "fsamp-bucket",
+                "objectKey": "test/key.txt",
+            }
+        )
 
         assert location.bucket_name == "fsamp-bucket"
         assert location.object_key == "test/key.txt"
@@ -248,8 +251,16 @@ class TestFileEvent:
         assert updated.event_type == EventType.ANALYSIS_COMPLETED
         assert original.event_id == updated.event_id  # Same ID
         # Compare timezone-aware timestamps
-        original_ts = original.timestamp.replace(tzinfo=timezone.utc) if original.timestamp.tzinfo is None else original.timestamp
-        updated_ts = updated.timestamp.replace(tzinfo=timezone.utc) if updated.timestamp.tzinfo is None else updated.timestamp
+        original_ts = (
+            original.timestamp.replace(tzinfo=UTC)
+            if original.timestamp.tzinfo is None
+            else original.timestamp
+        )
+        updated_ts = (
+            updated.timestamp.replace(tzinfo=UTC)
+            if updated.timestamp.tzinfo is None
+            else updated.timestamp
+        )
         assert updated_ts >= original_ts  # New timestamp
         assert updated.source == EventSource.PROCESSOR  # Updated source
 
@@ -300,6 +311,7 @@ class TestSQSMessageWrapper:
         event_data = create_valid_event_data()
 
         import orjson
+
         wrapper = SQSMessageWrapper(
             message_id="msg-123",
             body=orjson.dumps(event_data).decode(),
@@ -314,12 +326,13 @@ class TestSQSMessageWrapper:
         event_data = create_valid_event_data()
 
         import orjson
+
         sns_notification = {
             "Type": "Notification",
             "MessageId": "sns-msg-123",
             "TopicArn": "arn:aws:sns:eu-central-1:123:topic",
             "Message": orjson.dumps(event_data).decode(),
-            "Timestamp": datetime.now(timezone.utc).isoformat(),
+            "Timestamp": datetime.now(UTC).isoformat(),
         }
 
         wrapper = SQSMessageWrapper(

@@ -71,9 +71,7 @@ class TestSNSEventPublisherPublish:
         assert "correlationId" in attrs
         assert attrs["correlationId"]["DataType"] == "String"
 
-    def test_publish_client_error(
-        self, sample_file_event: FileEvent
-    ) -> None:
+    def test_publish_client_error(self, sample_file_event: FileEvent) -> None:
         """Test publish with client error."""
         client = MagicMock()
         client.publish.side_effect = ClientError(
@@ -116,12 +114,10 @@ class TestSNSEventPublisherPublishBatch:
         assert len(message_ids) == 3
         assert publisher._client.publish.call_count == 3
 
-    def test_publish_batch_partial_failure(
-        self, sample_file_event: FileEvent
-    ) -> None:
+    def test_publish_batch_partial_failure(self, sample_file_event: FileEvent) -> None:
         """Test batch publishing with partial failures."""
         client = MagicMock()
-        
+
         # First two succeed, third fails
         client.publish.side_effect = [
             {"MessageId": "msg-1"},
@@ -143,9 +139,7 @@ class TestSNSEventPublisherPublishBatch:
         # Should have 2 successful publishes
         assert len(message_ids) == 2
 
-    def test_publish_batch_empty(
-        self, publisher: SNSEventPublisher
-    ) -> None:
+    def test_publish_batch_empty(self, publisher: SNSEventPublisher) -> None:
         """Test batch publishing with empty list."""
         message_ids = publisher.publish_batch([])
         assert message_ids == []
@@ -173,15 +167,13 @@ class TestSNSEventPublisherPublishToQueue:
         message_id = publisher.publish_to_queue(sample_file_event, queue_arn)
 
         assert message_id == "test-message-id"
-        
+
         call_kwargs = publisher._client.publish.call_args.kwargs
         attrs = call_kwargs["MessageAttributes"]
         assert "targetQueue" in attrs
         assert attrs["targetQueue"]["StringValue"] == queue_arn
 
-    def test_publish_to_queue_client_error(
-        self, sample_file_event: FileEvent
-    ) -> None:
+    def test_publish_to_queue_client_error(self, sample_file_event: FileEvent) -> None:
         """Test publish to queue with client error."""
         client = MagicMock()
         client.publish.side_effect = ClientError(

@@ -41,7 +41,7 @@ class SNSEventPublisher(EventPublisher):
 
     def __init__(
         self,
-        sns_client: "SNSClient",
+        sns_client: SNSClient,
         topic_arn: str,
     ) -> None:
         """
@@ -70,9 +70,7 @@ class SNSEventPublisher(EventPublisher):
 
         try:
             # Serialize event to JSON (camelCase for compatibility)
-            message = orjson.dumps(
-                event.model_dump(mode="json", by_alias=True)
-            ).decode("utf-8")
+            message = orjson.dumps(event.model_dump(mode="json", by_alias=True)).decode("utf-8")
 
             # Message attributes for filtering subscriptions
             message_attributes = {
@@ -163,9 +161,7 @@ class SNSEventPublisher(EventPublisher):
         )
 
         try:
-            message = orjson.dumps(
-                event.model_dump(mode="json", by_alias=True)
-            ).decode("utf-8")
+            message = orjson.dumps(event.model_dump(mode="json", by_alias=True)).decode("utf-8")
 
             message_attributes = {
                 "eventType": {

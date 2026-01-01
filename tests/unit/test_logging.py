@@ -4,7 +4,6 @@
 """Tests for structured logging configuration."""
 
 import logging
-from unittest.mock import patch
 
 import pytest
 import structlog
@@ -64,7 +63,7 @@ class TestConfigureLogging:
         root_logger = logging.getLogger()
         root_logger.handlers.clear()
         root_logger.setLevel(logging.NOTSET)
-        
+
         configure_logging(level=level)
 
         expected_level = getattr(logging, level)
