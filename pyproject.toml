@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "FSAMP Processor - Event-driven file processor with FIPS 140-3 compliance"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 authors = [
     { name = "Pauszek", email = "pauszek@github.io" }
 ]
@@ -17,8 +17,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Security :: Cryptography",
 ]
 
@@ -135,7 +134,7 @@ include = '\.pyi?$'
 # MyPy (Type Checking)
 # =============================================================================
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

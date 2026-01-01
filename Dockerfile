@@ -2,13 +2,13 @@
 # FSAMP Processor - Production Dockerfile
 # =============================================================================
 # Multi-stage build for minimal image size and security.
-# Uses Python 3.11 slim image with non-root user.
+# Uses Python 3.14 slim image with non-root user.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
 # Stage 1: Builder
 # -----------------------------------------------------------------------------
-FROM python:3.11-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 
 # Set build-time variables
 ARG POETRY_VERSION=1.7.1
@@ -39,7 +39,7 @@ RUN pip install --no-cache-dir .
 # -----------------------------------------------------------------------------
 # Stage 2: Production
 # -----------------------------------------------------------------------------
-FROM python:3.11-slim-bookworm AS production
+FROM python:3.14-slim-bookworm AS production
 
 # Labels
 LABEL maintainer="Pauszek <pauszek@github.io>"

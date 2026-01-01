@@ -4,7 +4,7 @@
 # Configuration used by reusable workflows from fsamp-code-ci
 
 ci:
-  python-version: "3.11"
+  python-version: "3.14"
 
 files:
   version: release.version
