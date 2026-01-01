@@ -26,3 +26,8 @@ docker:
   image-name: fsamp-processor
   dockerfile: Dockerfile.lambda
   registry: ghcr.io
+
+sonar:
+  enabled: true
+  organization: pauszek
+  project-key: pauszek_fsamp-processor
