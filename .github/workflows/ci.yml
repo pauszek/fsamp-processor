@@ -8,5 +8,5 @@ on:
 
 jobs:
   call-python:
-    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@v0.0.19
+    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@v0.0.20
     secrets: inherit
