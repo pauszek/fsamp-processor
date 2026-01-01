@@ -26,7 +26,7 @@ class EventType(StrEnum):
 class FileMetadata(BaseModel):
     """Business metadata regarding the processed file."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     original_filename: Annotated[
         str,
@@ -62,7 +62,7 @@ class StorageLocation(BaseModel):
     Implements the Claim-Check Pattern for large payloads.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     bucket_name: Annotated[
         str,
@@ -93,7 +93,7 @@ class SecurityContext(BaseModel):
     Contains encryption details for the file payload.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     is_encrypted: Annotated[
         bool,
@@ -200,7 +200,7 @@ class SQSMessageWrapper(BaseModel):
     SNS wraps the message when publishing to SQS.
     """
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     message_id: Annotated[str, Field(alias="MessageId")]
     receipt_handle: str | None = None

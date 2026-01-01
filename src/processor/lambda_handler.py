@@ -194,7 +194,7 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         metrics.add_metric(name="FileSizeBytes", unit=MetricUnit.Bytes, value=file_size_bytes)
         
         logger.info("Processing file event", 
-                   filename=file_event.file_metadata.original_filename,
+                   original_filename=file_event.file_metadata.original_filename,
                    file_size_bytes=file_size_bytes)
         
         # Get processor and handle event

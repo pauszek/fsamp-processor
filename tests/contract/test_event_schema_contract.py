@@ -36,8 +36,8 @@ from processor.domain.events import (
 )
 
 
-# Path to the shared schema (relative to workspace root)
-SCHEMA_PATH = Path(__file__).parent.parent.parent.parent.parent / "fsamp-event-schema" / "event.schema.json"
+# Path to the shared schema (sibling repo in IdeaProjects)
+SCHEMA_PATH = Path(__file__).parent.parent.parent.parent / "fsamp-event-schema" / "event.schema.json"
 
 
 @pytest.fixture
@@ -116,6 +116,7 @@ class TestEventSchemaContract:
         required_fields = set(event_schema.get("required", []))
         expected_required = {
             "eventId",
+            "correlationId",  # Required for distributed tracing
             "timestamp", 
             "eventType",
             "fileMetadata",
@@ -153,7 +154,7 @@ class TestEventSchemaContract:
             ),
         )
         
-        event_json = json.loads(event.model_dump_json(by_alias=True))
+        event_json = json.loads(event.model_dump_json(by_alias=True, exclude_none=True))
         validate(instance=event_json, schema=event_schema)
         
         # Verify specific contract expectations
@@ -184,7 +185,7 @@ class TestEventSchemaContract:
             ),
         )
         
-        event_json = json.loads(event.model_dump_json(by_alias=True))
+        event_json = json.loads(event.model_dump_json(by_alias=True, exclude_none=True))
         validate(instance=event_json, schema=event_schema)
         
         assert event_json["eventType"] == "PROCESSING_FAILED"
@@ -205,14 +206,16 @@ class TestEventSchemaContract:
 
 
 class TestBackwardsCompatibility:
-    """Tests ensuring backwards compatibility with older event versions."""
+    """Tests ensuring strict validation for event schema."""
 
-    def test_optional_correlation_id_for_legacy_events(self) -> None:
+    def test_correlation_id_is_required(self) -> None:
         """
-        Verify that events without correlationId are still valid.
-        This supports backwards compatibility with older producers.
+        Verify that events without correlationId are rejected.
+        correlationId is required for proper distributed tracing.
         """
-        # Legacy event without correlationId
+        from pydantic import ValidationError
+        
+        # Event without correlationId - should fail validation
         legacy_event_data = {
             "eventId": str(uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -230,12 +233,16 @@ class TestBackwardsCompatibility:
             },
         }
         
-        # Should parse without error (correlationId defaults)
-        event = FileEvent.model_validate(legacy_event_data)
-        assert event.correlation_id is not None  # Should have default
+        # Should reject - correlationId is required for FIPS traceability
+        with pytest.raises(ValidationError) as exc_info:
+            FileEvent.model_validate(legacy_event_data)
+        
+        assert "correlationId" in str(exc_info.value)
 
-    def test_additional_properties_ignored(self) -> None:
-        """Verify that additional unknown properties don't break parsing."""
+    def test_additional_properties_rejected(self) -> None:
+        """Verify that additional unknown properties are rejected (strict mode)."""
+        from pydantic import ValidationError
+        
         event_data = {
             "eventId": str(uuid4()),
             "correlationId": "test",
@@ -252,11 +259,12 @@ class TestBackwardsCompatibility:
             "securityContext": {
                 "isEncrypted": True,
             },
-            # Unknown future field - should be ignored
-            "futureField": "some value",
-            "anotherFutureField": {"nested": "data"},
+            # Unknown field - should be rejected in strict mode
+            "unknownField": "some value",
         }
         
-        # Should parse without error
-        event = FileEvent.model_validate(event_data)
-        assert event.event_type == EventType.FILE_UPLOADED
+        # Should reject - extra="forbid" enforces strict schema
+        with pytest.raises(ValidationError) as exc_info:
+            FileEvent.model_validate(event_data)
+        
+        assert "unknownField" in str(exc_info.value)

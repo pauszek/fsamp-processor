@@ -52,34 +52,33 @@ def create_sqs_event(file_events: list[dict[str, Any]]) -> dict[str, Any]:
     return {"Records": records}
 
 
+from uuid import uuid4
+
+
 def create_file_event_dict(
-    event_id: str = "evt-12345",
+    event_id: str | None = None,
     event_type: str = "FILE_UPLOADED",
     filename: str = "test.pdf",
 ) -> dict[str, Any]:
-    """Create a file event dictionary."""
+    """Create a file event dictionary matching the current schema."""
     return {
-        "event_id": event_id,
-        "event_type": event_type,
-        "correlation_id": "corr-12345",
+        "eventId": str(event_id or uuid4()),
+        "eventType": event_type,
+        "correlationId": "corr-12345",
         "timestamp": datetime.utcnow().isoformat() + "Z",
-        "source": "test",
-        "schema_version": "1.0.0",
-        "file_metadata": {
-            "file_id": "file-12345",
-            "original_filename": filename,
-            "content_type": "application/pdf",
-            "file_size_bytes": 1024,
-            "checksum_sha256": "abc123",
+        "fileMetadata": {
+            "originalFilename": filename,
+            "fileSizeBytes": 1024,
+            "mimeType": "application/pdf",
         },
-        "storage_location": {
-            "bucket_name": "test-bucket",
-            "object_key": f"uploads/{filename}",
-            "region": "us-west-2",
+        "storageLocation": {
+            "bucketName": "test-bucket",
+            "objectKey": f"uploads/{filename}",
         },
-        "security_context": {
-            "encryption_algorithm": "AES-256-GCM",
-            "kms_key_id": "alias/test-key",
+        "securityContext": {
+            "isEncrypted": True,
+            "encryptionAlgorithm": "AES/GCM/NoPadding",
+            "kmsKeyId": "arn:aws:kms:us-west-2:123456789:key/test-key",
         },
     }
 
@@ -92,7 +91,7 @@ class TestLambdaHandler:
         """Create a mock FileProcessorService."""
         processor = MagicMock()
         processor.handle.return_value = ProcessingResult(
-            event_id="evt-12345",
+            event_id=str(uuid4()),
             correlation_id="corr-12345",
             status=ProcessingStatus.COMPLETED,
             started_at=datetime.utcnow(),
@@ -139,7 +138,7 @@ class TestLambdaHandler:
         
         # Create batch of 3 messages
         events = [
-            create_file_event_dict(event_id=f"evt-{i}", filename=f"file{i}.pdf")
+            create_file_event_dict(filename=f"file{i}.pdf")
             for i in range(3)
         ]
         event = create_sqs_event(events)
@@ -160,19 +159,19 @@ class TestLambdaHandler:
         # Second call fails
         mock_processor.handle.side_effect = [
             ProcessingResult(
-                event_id="evt-0",
+                event_id=str(uuid4()),
                 correlation_id="corr-0",
                 status=ProcessingStatus.COMPLETED,
                 started_at=datetime.utcnow(),
             ),
             ProcessingError(
                 message="Test error",
-                event_id="evt-1",
+                event_id=str(uuid4()),
                 correlation_id="corr-1",
                 retryable=True,
             ),
             ProcessingResult(
-                event_id="evt-2",
+                event_id=str(uuid4()),
                 correlation_id="corr-2",
                 status=ProcessingStatus.COMPLETED,
                 started_at=datetime.utcnow(),
@@ -181,7 +180,7 @@ class TestLambdaHandler:
         mock_get_processor.return_value = mock_processor
         
         events = [
-            create_file_event_dict(event_id=f"evt-{i}", filename=f"file{i}.pdf")
+            create_file_event_dict(filename=f"file{i}.pdf")
             for i in range(3)
         ]
         event = create_sqs_event(events)
@@ -231,7 +230,7 @@ class TestRecordHandler:
         
         mock_processor = MagicMock()
         mock_processor.handle.return_value = ProcessingResult(
-            event_id="evt-12345",
+            event_id=str(uuid4()),
             correlation_id="corr-12345",
             status=ProcessingStatus.COMPLETED,
             started_at=datetime.utcnow(),
