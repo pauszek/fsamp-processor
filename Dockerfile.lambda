@@ -18,12 +18,18 @@
 # -----------------------------------------------------------------------------
 FROM python:3.14-alpine AS builder
 
-# Install build dependencies for native extensions
+# Install build dependencies for native extensions (awslambdaric needs cmake, curl, make)
 RUN apk add --no-cache \
         gcc \
+        g++ \
         musl-dev \
         libffi-dev \
-        openssl-dev
+        openssl-dev \
+        cmake \
+        make \
+        curl-dev \
+        autoconf \
+        libtool
 
 WORKDIR /build
 COPY pyproject.toml .
