@@ -36,6 +36,11 @@ RUN pip install --upgrade pip && \
 # -----------------------------------------------------------------------------
 FROM public.ecr.aws/lambda/python:3.14
 
+# Update base image packages to fix CVEs (glib2, urllib3)
+RUN dnf update -y glib2 && \
+    pip install --upgrade urllib3>=2.6.0 && \
+    dnf clean all
+
 # Labels
 LABEL maintainer="Pauszek <pauszek@github.io>"
 LABEL org.opencontainers.image.title="FSAMP Processor Lambda"
