@@ -36,10 +36,15 @@ RUN pip install --upgrade pip && \
 # -----------------------------------------------------------------------------
 FROM public.ecr.aws/lambda/python:3.14
 
-# Update base image packages to fix CVEs (glib2, urllib3)
+# Update base image packages to fix CVEs
+# - glib2: CVE-2025-13601 (Integer overflow in g_escape_uri_string) - fixed in 2.82.2-767
+# - urllib3: Updated to latest secure version
 RUN dnf update -y glib2 && \
     pip install --upgrade urllib3>=2.6.0 && \
-    dnf clean all
+    dnf clean all && \
+    # Verify glib2 is updated to fixed version (>= 767)
+    rpm -q glib2 | grep -E '76[7-9]|7[7-9][0-9]|[8-9][0-9][0-9]' || \
+    (echo "ERROR: glib2 not updated to fix CVE-2025-13601" && exit 1)
 
 # Labels
 LABEL maintainer="Pauszek <pauszek@github.io>"
