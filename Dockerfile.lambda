@@ -1,8 +1,8 @@
 # =============================================================================
-# FSAMP Processor - Lambda Container Image (Alpine-based)
+# FSAMP Processor - Lambda Container Image (Debian slim)
 # =============================================================================
 # Docker image for AWS Lambda deployment using Lambda Runtime Interface Client.
-# Based on Alpine Linux for minimal size and latest security patches.
+# Based on Debian slim for compatibility with awslambdaric pre-built wheels.
 #
 # Build:
 #   docker build -f Dockerfile.lambda -t fsamp-processor-lambda .
@@ -14,43 +14,39 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Stage 1: Builder - compile dependencies with build tools
+# Stage 1: Builder - compile dependencies
 # -----------------------------------------------------------------------------
-FROM python:3.14-alpine AS builder
+FROM python:3.14-slim-bookworm AS builder
 
-# Install build dependencies for native extensions (awslambdaric needs cmake, curl, make)
-RUN apk add --no-cache \
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
-        g++ \
-        musl-dev \
+        libc6-dev \
         libffi-dev \
-        openssl-dev \
-        cmake \
-        make \
-        curl-dev \
-        autoconf \
-        libtool
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 COPY pyproject.toml .
 COPY src/ src/
 
 # Install dependencies to /asset directory
-RUN pip install --upgrade pip && \
-    pip install --target /asset . && \
-    pip install --target /asset awslambdaric
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --target /asset . && \
+    pip install --no-cache-dir --target /asset awslambdaric
 
 # -----------------------------------------------------------------------------
-# Stage 2: Lambda Runtime - minimal Alpine image
+# Stage 2: Lambda Runtime - minimal Debian image
 # -----------------------------------------------------------------------------
-FROM python:3.14-alpine
+FROM python:3.14-slim-bookworm
 
 # Update all packages for security fixes
-RUN apk upgrade --no-cache && \
-    apk add --no-cache \
-        libffi \
-        openssl \
-        ca-certificates
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libcurl4 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Set up Lambda runtime directory structure
 ENV LAMBDA_TASK_ROOT=/var/task
