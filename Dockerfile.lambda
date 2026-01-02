@@ -1,8 +1,8 @@
 # =============================================================================
-# FSAMP Processor - Lambda Container Image
+# FSAMP Processor - Lambda Container Image (Alpine-based)
 # =============================================================================
-# Docker image for AWS Lambda deployment using Lambda Web Adapter or
-# Lambda Container Image support.
+# Docker image for AWS Lambda deployment using Lambda Runtime Interface Client.
+# Based on Alpine Linux for minimal size and latest security patches.
 #
 # Build:
 #   docker build -f Dockerfile.lambda -t fsamp-processor-lambda .
@@ -14,51 +14,57 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Stage 1: Builder
+# Stage 1: Builder - compile dependencies with build tools
 # -----------------------------------------------------------------------------
-FROM public.ecr.aws/lambda/python:3.14 AS builder
+FROM python:3.14-alpine AS builder
 
-# Install build dependencies
-RUN dnf install -y gcc python3-devel && \
-    dnf clean all
+# Install build dependencies for native extensions
+RUN apk add --no-cache \
+        gcc \
+        musl-dev \
+        libffi-dev \
+        openssl-dev
 
-# Create requirements from pyproject.toml
 WORKDIR /build
 COPY pyproject.toml .
 COPY src/ src/
 
-# Install dependencies to /asset
+# Install dependencies to /asset directory
 RUN pip install --upgrade pip && \
-    pip install --target /asset .
+    pip install --target /asset . && \
+    pip install --target /asset awslambdaric
 
 # -----------------------------------------------------------------------------
-# Stage 2: Lambda Runtime
+# Stage 2: Lambda Runtime - minimal Alpine image
 # -----------------------------------------------------------------------------
-FROM public.ecr.aws/lambda/python:3.14
+FROM python:3.14-alpine
 
-# Update base image packages to fix CVEs
-# - glib2: CVE-2025-13601 (Integer overflow in g_escape_uri_string) - fixed in 2.82.2-767
-# - urllib3: Updated to latest secure version
-RUN dnf update -y glib2 && \
-    pip install --upgrade urllib3>=2.6.0 && \
-    dnf clean all && \
-    # Verify glib2 is updated to fixed version (>= 767)
-    rpm -q glib2 | grep -E '76[7-9]|7[7-9][0-9]|[8-9][0-9][0-9]' || \
-    (echo "ERROR: glib2 not updated to fix CVE-2025-13601" && exit 1)
+# Update all packages for security fixes
+RUN apk upgrade --no-cache && \
+    apk add --no-cache \
+        libffi \
+        openssl \
+        ca-certificates
+
+# Set up Lambda runtime directory structure
+ENV LAMBDA_TASK_ROOT=/var/task
+ENV LAMBDA_RUNTIME_DIR=/var/runtime
+WORKDIR ${LAMBDA_TASK_ROOT}
 
 # Labels
 LABEL maintainer="Pauszek <pauszek@github.io>"
 LABEL org.opencontainers.image.title="FSAMP Processor Lambda"
-LABEL org.opencontainers.image.description="Event-driven file processor Lambda with FIPS 140-3"
+LABEL org.opencontainers.image.description="Event-driven file processor Lambda"
 LABEL org.opencontainers.image.version="0.1.0"
 
-# Copy dependencies
+# Copy dependencies (includes awslambdaric)
 COPY --from=builder /asset ${LAMBDA_TASK_ROOT}
 
 # Copy source code
 COPY src/processor ${LAMBDA_TASK_ROOT}/processor
 
-# Set Lambda handler
+# Lambda Runtime Interface Client entrypoint
+ENTRYPOINT ["python3", "-m", "awslambdaric"]
 CMD ["processor.lambda_handler.lambda_handler"]
 
 # =============================================================================
