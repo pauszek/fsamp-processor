@@ -234,6 +234,23 @@ class FileEvent(BaseModel):
         ),
     ]
 
+    # =========================================================================
+    # Serialization Helpers (UUID → string at boundary)
+    # =========================================================================
+    # These properties provide string representations for use at serialization
+    # boundaries (DynamoDB, SNS attributes, logging) while keeping the domain
+    # model type-safe with UUID.
+    
+    @property
+    def event_id_str(self) -> str:
+        """String representation of event_id for serialization boundaries."""
+        return str(self.event_id)
+    
+    @property
+    def correlation_id_str(self) -> str:
+        """String representation of correlation_id for serialization boundaries."""
+        return str(self.correlation_id)
+
     def with_new_event_type(self, event_type: EventType) -> FileEvent:
         """Create a new event with updated event type (immutable pattern)."""
         return self.model_copy(

@@ -95,7 +95,7 @@ def _create_valid_event(
         security_context=SecurityContext(
             is_encrypted=True,
             encryption_algorithm="AES/GCM/NoPadding",
-            kms_key_id="arn:aws:kms:eu-central-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+            kms_key_id="arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
         ),
     )
 
@@ -253,7 +253,7 @@ class TestBackwardsCompatibility:
                 security_context=SecurityContext(
                     is_encrypted=True,
                     encryption_algorithm="AES/GCM/NoPadding",
-                    kms_key_id="arn:aws:kms:eu-central-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+                    kms_key_id="arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
                 ),
             )
 
@@ -282,7 +282,7 @@ class TestBackwardsCompatibility:
             "securityContext": {
                 "isEncrypted": True,
                 "encryptionAlgorithm": "AES/GCM/NoPadding",
-                "kmsKeyId": "arn:aws:kms:eu-central-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+                "kmsKeyId": "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
             },
             "unknownField": "should be rejected",
         }
@@ -300,7 +300,7 @@ class TestBackwardsCompatibility:
             SecurityContext(
                 is_encrypted=False,  # Not allowed
                 encryption_algorithm="AES/GCM/NoPadding",
-                kms_key_id="arn:aws:kms:eu-central-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+                kms_key_id="arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
             )
 
     def test_aes_cbc_rejected(self) -> None:
@@ -311,7 +311,7 @@ class TestBackwardsCompatibility:
             SecurityContext(
                 is_encrypted=True,
                 encryption_algorithm="AES/CBC/PKCS5Padding",  # Not allowed
-                kms_key_id="arn:aws:kms:eu-central-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+                kms_key_id="arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
             )
 
     def test_file_size_max_100mb(self) -> None:
@@ -354,7 +354,7 @@ class TestSchemaValidation:
             "securityContext": {
                 "isEncrypted": True,
                 "encryptionAlgorithm": "AES/GCM/NoPadding",
-                "kmsKeyId": "arn:aws:kms:eu-central-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+                "kmsKeyId": "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
             },
         }
 
@@ -385,7 +385,7 @@ class TestSchemaValidation:
             "securityContext": {
                 "isEncrypted": True,
                 "encryptionAlgorithm": "AES/GCM/NoPadding",
-                "kmsKeyId": "arn:aws:kms:eu-central-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+                "kmsKeyId": "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
             },
         }
 

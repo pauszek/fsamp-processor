@@ -25,7 +25,7 @@ from processor.domain.events import (
 # ============================================================================
 
 SAMPLE_CHECKSUM = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-SAMPLE_KMS_ARN = "arn:aws:kms:eu-central-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+SAMPLE_KMS_ARN = "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012"
 
 
 def create_valid_file_metadata(**overrides) -> FileMetadata:
@@ -330,7 +330,7 @@ class TestSQSMessageWrapper:
         sns_notification = {
             "Type": "Notification",
             "MessageId": "sns-msg-123",
-            "TopicArn": "arn:aws:sns:eu-central-1:123:topic",
+            "TopicArn": "arn:aws:sns:us-west-2:123:topic",
             "Message": orjson.dumps(event_data).decode(),
             "Timestamp": datetime.now(UTC).isoformat(),
         }
