@@ -1,6 +1,6 @@
 # FSAMP Processor
 
-[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.14+-3776AB?logo=python)](https://www.python.org/)
 [![AWS Lambda](https://img.shields.io/badge/AWS-Lambda-FF9900?logo=awslambda)](https://aws.amazon.com/lambda/)
 [![FIPS 140-3](https://img.shields.io/badge/FIPS-140--3-green)](https://csrc.nist.gov/publications/detail/fips/140/3/final)
 
@@ -117,7 +117,7 @@ fsamp-processor/
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.14+
 - Docker & Docker Compose
 - AWS SAM CLI (for local Lambda testing)
 - LocalStack (for local development)

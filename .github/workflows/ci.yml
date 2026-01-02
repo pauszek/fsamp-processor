@@ -8,5 +8,7 @@ on:
 
 jobs:
   call-python:
-    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@main
-    secrets: inherit
+    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@404e1dad7df2f2d5505e64fa4b26104e51f54b24
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      GABRBA_SECRET: ${{ secrets.GABRBA_SECRET }}

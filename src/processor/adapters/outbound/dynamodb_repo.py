@@ -41,7 +41,7 @@ class DynamoDBMetadataRepository(MetadataRepository):
 
     def __init__(
         self,
-        dynamodb_client: "DynamoDBClient",
+        dynamodb_client: DynamoDBClient,
         table_name: str,
     ) -> None:
         """

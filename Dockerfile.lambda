@@ -1,8 +1,8 @@
 # =============================================================================
-# FSAMP Processor - Lambda Container Image
+# FSAMP Processor - Lambda Container Image (Chainguard)
 # =============================================================================
-# Docker image for AWS Lambda deployment using Lambda Web Adapter or
-# Lambda Container Image support.
+# Docker image for AWS Lambda deployment using Lambda Runtime Interface Client.
+# Based on Chainguard Python image - hardened, minimal, zero known CVEs.
 #
 # Build:
 #   docker build -f Dockerfile.lambda -t fsamp-processor-lambda .
@@ -14,41 +14,45 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Stage 1: Builder
+# Stage 1: Builder - compile dependencies using glibc-compatible image
 # -----------------------------------------------------------------------------
-FROM public.ecr.aws/lambda/python:3.12 AS builder
+FROM cgr.dev/chainguard/python:latest-dev AS builder
 
-# Install build dependencies
-RUN dnf install -y gcc python3-devel && \
-    dnf clean all
+USER root
 
-# Create requirements from pyproject.toml
 WORKDIR /build
 COPY pyproject.toml .
 COPY src/ src/
 
-# Install dependencies to /asset
-RUN pip install --upgrade pip && \
-    pip install --target /asset .
+# Install dependencies to /asset directory
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --target /asset . && \
+    pip install --no-cache-dir --target /asset awslambdaric
 
 # -----------------------------------------------------------------------------
-# Stage 2: Lambda Runtime
+# Stage 2: Lambda Runtime - Chainguard minimal (zero CVE)
 # -----------------------------------------------------------------------------
-FROM public.ecr.aws/lambda/python:3.12
+FROM cgr.dev/chainguard/python:latest
+
+# Set up Lambda runtime directory structure
+ENV LAMBDA_TASK_ROOT=/var/task
+ENV LAMBDA_RUNTIME_DIR=/var/runtime
+WORKDIR ${LAMBDA_TASK_ROOT}
 
 # Labels
 LABEL maintainer="Pauszek <pauszek@github.io>"
 LABEL org.opencontainers.image.title="FSAMP Processor Lambda"
-LABEL org.opencontainers.image.description="Event-driven file processor Lambda with FIPS 140-3"
+LABEL org.opencontainers.image.description="Event-driven file processor Lambda"
 LABEL org.opencontainers.image.version="0.1.0"
 
-# Copy dependencies
+# Copy dependencies (includes awslambdaric)
 COPY --from=builder /asset ${LAMBDA_TASK_ROOT}
 
 # Copy source code
 COPY src/processor ${LAMBDA_TASK_ROOT}/processor
 
-# Set Lambda handler
+# Lambda Runtime Interface Client entrypoint
+ENTRYPOINT ["python", "-m", "awslambdaric"]
 CMD ["processor.lambda_handler.lambda_handler"]
 
 # =============================================================================

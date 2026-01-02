@@ -4,13 +4,10 @@
 # Configuration used by reusable workflows from fsamp-code-ci
 
 ci:
-  python-version: "3.11"
+  python-version: "3.14"
 
 files:
   version: release.version
-
-qodana:
-  enabled: true
 
 bump:
   enabled: true
@@ -26,3 +23,8 @@ docker:
   image-name: fsamp-processor
   dockerfile: Dockerfile.lambda
   registry: ghcr.io
+
+sonar:
+  enabled: true
+  organization: pauszek
+  project-key: pauszek_fsamp-processor

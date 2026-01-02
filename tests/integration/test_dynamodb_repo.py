@@ -3,8 +3,9 @@
 # =============================================================================
 """Tests for DynamoDBMetadataRepository with mocked AWS."""
 
-import pytest
 from datetime import datetime
+
+import pytest
 
 from processor.adapters.outbound.dynamodb_repo import DynamoDBMetadataRepository
 from processor.domain.models import MetadataRecord, ProcessingStatus
@@ -57,9 +58,7 @@ class TestDynamoDBMetadataRepository:
         result = repo.get_by_id("nonexistent-id")
         assert result is None
 
-    def test_get_history(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_get_history(self, repo: DynamoDBMetadataRepository) -> None:
         """Test getting record history."""
         file_id = "history-test-file"
 
@@ -67,7 +66,7 @@ class TestDynamoDBMetadataRepository:
         for i in range(5):
             record = MetadataRecord(
                 file_id=file_id,
-                timestamp=f"2024-01-0{i+1}T12:00:00Z",
+                timestamp=f"2024-01-0{i + 1}T12:00:00Z",
                 correlation_id=f"corr-{i}",
                 original_filename="history-test.pdf",
                 file_size_bytes=1000 + i,
@@ -122,17 +121,17 @@ class TestDynamoDBMetadataRepository:
         assert retrieved.status == ProcessingStatus.FAILED
         assert retrieved.error_message == "Processing failed: timeout"
 
-    def test_query_by_status(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
+    def test_query_by_status(self, repo: DynamoDBMetadataRepository) -> None:
         """Test querying records by status using GSI."""
         # Create records with different statuses
-        for i, status in enumerate([
-            ProcessingStatus.PENDING,
-            ProcessingStatus.PENDING,
-            ProcessingStatus.COMPLETED,
-            ProcessingStatus.FAILED,
-        ]):
+        for i, status in enumerate(
+            [
+                ProcessingStatus.PENDING,
+                ProcessingStatus.PENDING,
+                ProcessingStatus.COMPLETED,
+                ProcessingStatus.FAILED,
+            ]
+        ):
             record = MetadataRecord(
                 file_id=f"status-query-{i}",
                 timestamp=datetime.utcnow().isoformat(),

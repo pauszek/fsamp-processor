@@ -10,9 +10,9 @@ from processor.adapters.outbound.s3_storage import S3FileStorage
 from processor.adapters.outbound.sns_publisher import SNSEventPublisher
 
 __all__ = [
-    "S3FileStorage",
     "DynamoDBMetadataRepository",
     "DynamoDBOutboxRepository",
-    "SNSEventPublisher",
     "KMSCryptoProvider",
+    "S3FileStorage",
+    "SNSEventPublisher",
 ]

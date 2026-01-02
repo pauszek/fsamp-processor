@@ -35,7 +35,7 @@ class Settings(BaseSettings):
         default="local",
         description="Deployment environment",
     )
-    
+
     # -------------------------------------------------------------------------
     # Lambda-specific settings
     # -------------------------------------------------------------------------
@@ -185,7 +185,7 @@ class Settings(BaseSettings):
     def should_use_fips(self) -> bool:
         """
         Check if FIPS endpoints should be used.
-        
+
         FIPS endpoints are only available in us-* regions and not for LocalStack.
         """
         if self.is_local or self.aws_endpoint_url:

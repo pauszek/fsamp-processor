@@ -53,7 +53,7 @@ class KMSCryptoProvider(CryptoProvider):
 
     def __init__(
         self,
-        kms_client: "KMSClient",
+        kms_client: KMSClient,
         key_id: str,
     ) -> None:
         """
@@ -191,6 +191,7 @@ class KMSCryptoProvider(CryptoProvider):
 
             # Generate random nonce (IV)
             import os
+
             nonce = os.urandom(GCM_NONCE_SIZE)
 
             # Encrypt with AES-256-GCM (FIPS 140-3 approved)

@@ -14,11 +14,9 @@ from processor.adapters.outbound import (
 )
 
 __all__ = [
-    # Inbound adapters
-    "SQSConsumer",
-    # Outbound adapters
-    "S3FileStorage",
     "DynamoDBMetadataRepository",
-    "SNSEventPublisher",
     "KMSCryptoProvider",
+    "S3FileStorage",
+    "SNSEventPublisher",
+    "SQSConsumer",
 ]

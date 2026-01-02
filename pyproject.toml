@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "FSAMP Processor - Event-driven file processor with FIPS 140-3 compliance"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 authors = [
     { name = "Pauszek", email = "pauszek@github.io" }
 ]
@@ -17,59 +17,59 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Security :: Cryptography",
 ]
 
 dependencies = [
     # AWS SDK
-    "boto3>=1.35.0",
-    "botocore>=1.35.0",
+    "boto3>=1.42.0",
+    "botocore>=1.42.0",
+    
+    # Force urllib3 upgrade (CVE-2025-66418, CVE-2025-66471)
+    "urllib3>=2.6.0",
     
     # AWS Lambda Powertools (logging, tracing, metrics, batch)
-    "aws-lambda-powertools[tracer,aws-sdk]>=3.3.0",
+    "aws-lambda-powertools[tracer,aws-sdk]>=3.23.0",
     
     # Validation & Settings
-    "pydantic>=2.9.0",
-    "pydantic-settings>=2.5.0",
+    "pydantic>=2.12.0",
+    "pydantic-settings>=2.12.0",
     
     # Cryptography (FIPS 140-3 compliant)
-    "cryptography>=43.0.0",
+    "cryptography>=46.0.0",
     
     # Observability
-    "structlog>=24.4.0",
-    "python-json-logger>=2.0.7",
+    "structlog>=25.5.0",
+    "python-json-logger>=4.0.0",
     
     # Utilities
-    "tenacity>=9.0.0",
+    "tenacity>=9.1.0",
     "python-dateutil>=2.9.0",
-    "orjson>=3.10.0",
+    "orjson>=3.11.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.3.0",
-    "pytest-cov>=5.0.0",
-    "pytest-asyncio>=0.24.0",
-    "pytest-mock>=3.14.0",
-    "moto[all]>=5.0.0",
-    "mypy>=1.13.0",
-    "ruff>=0.7.0",
-    "black>=24.10.0",
-    "isort>=5.13.0",
-    "pre-commit>=4.0.0",
+    "pytest>=8.4.0",
+    "pytest-cov>=6.1.0",
+    "pytest-asyncio>=0.26.0",
+    "pytest-mock>=3.15.0",
+    "moto[all]>=5.1.0",
+    "mypy>=1.16.0",
+    "ruff>=0.14.0",
+    "pre-commit>=4.2.0",
     "types-python-dateutil>=2.9.0",
-    "boto3-stubs[s3,sqs,dynamodb,kms]>=1.35.0",
+    "boto3-stubs[s3,sqs,dynamodb,kms]>=1.42.0",
 ]
 test = [
-    "pytest>=8.3.0",
-    "pytest-cov>=5.0.0",
-    "pytest-mock>=3.14.0",
-    "moto[all]>=5.0.0",
-    "localstack-client>=2.6.0",
+    "pytest>=8.4.0",
+    "pytest-cov>=6.1.0",
+    "pytest-mock>=3.15.0",
+    "moto[all]>=5.1.0",
+    "localstack-client>=2.8.0",
     # Contract testing
-    "jsonschema>=4.23.0",
+    "jsonschema>=4.25.0",
 ]
 
 [project.scripts]
@@ -93,7 +93,7 @@ where = ["src"]
 # Ruff (Linter + Formatter)
 # =============================================================================
 [tool.ruff]
-target-version = "py311"
+target-version = "py314"
 line-length = 100
 src = ["src", "tests"]
 
@@ -118,7 +118,20 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*" = ["S101", "ARG001"]
+"tests/**/*" = [
+    "S101",   # Allow assert
+    "S105",   # Allow hardcoded passwords (fake AWS creds for moto)
+    "ARG001", # Allow unused arguments (fixtures)
+    "ARG002", # Allow unused method arguments (mocks)
+    "B017",   # Allow blind exceptions
+    "F841",   # Allow unused variables (mock assertions)
+    "E501",   # Allow long lines (SHA256 checksums)
+]
+"src/processor/adapters/outbound/kms_crypto.py" = ["ARG002", "B905"]  # test crypto provider
+"src/processor/adapters/outbound/outbox_repo.py" = ["E501"]  # long DynamoDB expressions
+"src/processor/infrastructure/aws_clients.py" = ["B019"]  # lru_cache on singleton factory methods is intentional
+"src/processor/infrastructure/logging.py" = ["RUF005"]  # list concatenation is clearer here
+"src/processor/outbox_publisher.py" = ["ARG001"]  # Lambda handler signature requires event/context
 
 [tool.ruff.lint.isort]
 known-first-party = ["processor"]
@@ -135,7 +148,7 @@ include = '\.pyi?$'
 # MyPy (Type Checking)
 # =============================================================================
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

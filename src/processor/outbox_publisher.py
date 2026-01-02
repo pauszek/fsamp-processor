@@ -95,13 +95,13 @@ def get_dynamodb_client():
 def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
     """
     Process a single DynamoDB Stream record.
-    
+
     This is triggered for each INSERT to the outbox table.
     We only process INSERT events (new outbox items).
-    
+
     Args:
         record: DynamoDB Streams record.
-        
+
     Returns:
         Result dictionary with event details.
     """
@@ -130,18 +130,18 @@ def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
     try:
         # Parse outbox event from DynamoDB item
         outbox_event = OutboxEvent.from_dynamodb_item(new_image)
-        
+
         log = logger.bind(
             outbox_event_id=outbox_event.event_id,
             event_type=outbox_event.event_type.value,
             aggregate_id=outbox_event.aggregate_id,
         )
-        
+
         log.info("Publishing outbox event to SNS")
 
         # Publish to SNS
         publish_to_sns(outbox_event)
-        
+
         # Mark as published in DynamoDB
         mark_event_published(outbox_event)
 
@@ -166,7 +166,7 @@ def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
 
     except Exception as e:
         log.exception("Failed to publish outbox event")
-        
+
         # Try to mark as failed
         try:
             event_id = new_image.get("eventId")
@@ -174,14 +174,14 @@ def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
                 mark_event_failed(event_id, str(e))
         except Exception:
             log.exception("Failed to mark event as failed")
-        
+
         # Record failure metric
         metrics.add_metric(
             name="EventsFailedToPublish",
             unit=MetricUnit.Count,
             value=1,
         )
-        
+
         raise
 
 
@@ -189,18 +189,18 @@ def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
 def publish_to_sns(outbox_event: OutboxEvent) -> str:
     """
     Publish outbox event to SNS topic.
-    
+
     Args:
         outbox_event: The event to publish.
-        
+
     Returns:
         SNS message ID.
     """
     sns = get_sns_client()
-    
+
     message = json.dumps(outbox_event.to_sns_message())
     attributes = outbox_event.to_sns_attributes()
-    
+
     response = sns.publish(
         TopicArn=SNS_TOPIC_ARN,
         Message=message,
@@ -208,10 +208,10 @@ def publish_to_sns(outbox_event: OutboxEvent) -> str:
         # Use message group ID for FIFO topics (if applicable)
         # MessageGroupId=outbox_event.message_group_id,
     )
-    
+
     message_id = response["MessageId"]
     logger.debug("Published to SNS", message_id=message_id)
-    
+
     return message_id
 
 
@@ -219,11 +219,11 @@ def publish_to_sns(outbox_event: OutboxEvent) -> str:
 def mark_event_published(outbox_event: OutboxEvent) -> None:
     """Mark outbox event as published in DynamoDB."""
     from datetime import datetime, timedelta
-    
+
     dynamodb = get_dynamodb_client()
     now = datetime.utcnow().isoformat()
     ttl = int((datetime.utcnow() + timedelta(hours=24)).timestamp())
-    
+
     dynamodb.update_item(
         TableName=OUTBOX_TABLE_NAME,
         Key={
@@ -231,8 +231,7 @@ def mark_event_published(outbox_event: OutboxEvent) -> None:
             "SK": {"S": f"EVENT#{outbox_event.event_id}"},
         },
         UpdateExpression=(
-            "SET #status = :status, publishedAt = :published, "
-            "GSI1PK = :gsi1pk, #ttl = :ttl"
+            "SET #status = :status, publishedAt = :published, GSI1PK = :gsi1pk, #ttl = :ttl"
         ),
         ExpressionAttributeNames={
             "#status": "status",
@@ -245,7 +244,7 @@ def mark_event_published(outbox_event: OutboxEvent) -> None:
             ":ttl": {"N": str(ttl)},
         },
     )
-    
+
     logger.debug("Marked event as published", event_id=outbox_event.event_id)
 
 
@@ -253,7 +252,7 @@ def mark_event_published(outbox_event: OutboxEvent) -> None:
 def mark_event_failed(event_id: str, error: str, aggregate_type: str = "FileProcessing") -> None:
     """Mark outbox event as failed in DynamoDB."""
     dynamodb = get_dynamodb_client()
-    
+
     dynamodb.update_item(
         TableName=OUTBOX_TABLE_NAME,
         Key={
@@ -276,7 +275,7 @@ def mark_event_failed(event_id: str, error: str, aggregate_type: str = "FileProc
             ":gsi1pk": {"S": f"STATUS#{OutboxStatus.FAILED.value}"},
         },
     )
-    
+
     logger.warning("Marked event as failed", event_id=event_id, error=error)
 
 
@@ -291,14 +290,14 @@ def mark_event_failed(event_id: str, error: str, aggregate_type: str = "FileProc
 def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
     """
     AWS Lambda handler for Outbox Publisher.
-    
+
     Triggered by DynamoDB Streams when new events are written to the
     outbox table. Uses batch processing with partial failure support.
-    
+
     Args:
         event: DynamoDB Streams event with Records.
         context: Lambda context.
-        
+
     Returns:
         Batch response with itemIdentifier for failed records.
     """
@@ -333,21 +332,21 @@ def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, A
 def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
     """
     Lambda handler for retrying failed outbox events.
-    
+
     This can be triggered by CloudWatch Events (scheduled) to retry
     events that failed to publish.
-    
+
     Args:
         event: CloudWatch Events scheduled event.
         context: Lambda context.
-        
+
     Returns:
         Summary of retry results.
     """
     logger.info("Starting retry of failed outbox events")
-    
+
     dynamodb = get_dynamodb_client()
-    
+
     # Query failed events
     response = dynamodb.query(
         TableName=OUTBOX_TABLE_NAME,
@@ -360,17 +359,17 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
         },
         Limit=100,
     )
-    
+
     items = response.get("Items", [])
     logger.info(f"Found {len(items)} failed events to retry")
-    
+
     success_count = 0
     failure_count = 0
-    
+
     for item in items:
         try:
             outbox_event = OutboxEvent.from_dynamodb_item(item)
-            
+
             # Reset status to PENDING for retry
             dynamodb.update_item(
                 TableName=OUTBOX_TABLE_NAME,
@@ -385,22 +384,22 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
                     ":gsi1pk": {"S": f"STATUS#{OutboxStatus.PENDING.value}"},
                 },
             )
-            
+
             # Publish to SNS
             publish_to_sns(outbox_event)
             mark_event_published(outbox_event)
-            
+
             success_count += 1
             logger.info(f"Successfully retried event {outbox_event.event_id}")
-            
-        except Exception as e:
+
+        except Exception:
             failure_count += 1
-            logger.exception(f"Failed to retry event", item_pk=item.get("PK", {}).get("S"))
-    
+            logger.exception("Failed to retry event", item_pk=item.get("PK", {}).get("S"))
+
     # Record metrics
     metrics.add_metric(name="EventsRetried", unit=MetricUnit.Count, value=success_count)
     metrics.add_metric(name="EventsRetryFailed", unit=MetricUnit.Count, value=failure_count)
-    
+
     return {
         "statusCode": 200,
         "body": {

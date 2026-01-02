@@ -6,12 +6,12 @@ Core domain models representing the state and results of file processing.
 Implements Outbox Pattern for reliable event publishing.
 """
 
+import json
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
-import json
-import uuid
 
 
 class ProcessingStatus(StrEnum):
@@ -82,7 +82,7 @@ class ProcessingResult:
         error_message: str | None = None,
         error_code: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> "ProcessingResult":
+    ) -> ProcessingResult:
         """Create a new result with completion data (immutable pattern)."""
         return ProcessingResult(
             event_id=self.event_id,
@@ -215,7 +215,7 @@ class MetadataRecord:
         return item
 
     @classmethod
-    def from_dynamodb_item(cls, item: dict[str, Any]) -> "MetadataRecord":
+    def from_dynamodb_item(cls, item: dict[str, Any]) -> MetadataRecord:
         """Create from DynamoDB item format."""
         # Extract PK and SK
         pk = item["PK"]["S"]  # FILE#<file_id>
@@ -258,12 +258,12 @@ class MetadataRecord:
 class OutboxEvent:
     """
     Outbox event for reliable event publishing (Transactional Outbox Pattern).
-    
+
     The outbox pattern ensures that database writes and event publishing
     are atomic - either both happen or neither happens. Events are first
     written to the outbox table as part of the same transaction as the
     business data, then published asynchronously by a separate process.
-    
+
     Benefits:
     - At-least-once delivery guarantee
     - Event replay capability
@@ -309,7 +309,7 @@ class OutboxEvent:
         payload: dict[str, Any],
         aggregate_type: str = "FileProcessing",
         message_group_id: str | None = None,
-    ) -> "OutboxEvent":
+    ) -> OutboxEvent:
         """Factory method to create a new outbox event."""
         return cls(
             event_id=str(uuid.uuid4()),
@@ -329,7 +329,7 @@ class OutboxEvent:
         is_safe: bool,
         bucket_name: str,
         object_key: str,
-    ) -> "OutboxEvent":
+    ) -> OutboxEvent:
         """Create event for successful file processing."""
         return cls.create(
             event_type=OutboxEventType.FILE_PROCESSED,
@@ -352,7 +352,7 @@ class OutboxEvent:
         correlation_id: str,
         error_code: str,
         error_message: str,
-    ) -> "OutboxEvent":
+    ) -> OutboxEvent:
         """Create event for failed file processing."""
         return cls.create(
             event_type=OutboxEventType.FILE_FAILED,
@@ -373,7 +373,7 @@ class OutboxEvent:
         correlation_id: str,
         reason: str,
         findings: list[str],
-    ) -> "OutboxEvent":
+    ) -> OutboxEvent:
         """Create event for quarantined (unsafe) file."""
         return cls.create(
             event_type=OutboxEventType.FILE_QUARANTINED,
@@ -417,7 +417,7 @@ class OutboxEvent:
         return item
 
     @classmethod
-    def from_dynamodb_item(cls, item: dict[str, Any]) -> "OutboxEvent":
+    def from_dynamodb_item(cls, item: dict[str, Any]) -> OutboxEvent:
         """Create from DynamoDB item format."""
         return cls(
             event_id=item["eventId"]["S"],
@@ -435,14 +435,14 @@ class OutboxEvent:
         )
 
     @classmethod
-    def from_dynamodb_stream_record(cls, record: dict[str, Any]) -> "OutboxEvent":
+    def from_dynamodb_stream_record(cls, record: dict[str, Any]) -> OutboxEvent:
         """Create from DynamoDB Streams record (NewImage format)."""
         new_image = record.get("dynamodb", {}).get("NewImage", {})
         if not new_image:
             raise ValueError("No NewImage in DynamoDB stream record")
         return cls.from_dynamodb_item(new_image)
 
-    def mark_published(self) -> "OutboxEvent":
+    def mark_published(self) -> OutboxEvent:
         """Mark event as published (returns new instance for immutability in tests)."""
         self.status = OutboxStatus.PUBLISHED
         self.published_at = datetime.utcnow().isoformat()
@@ -450,7 +450,7 @@ class OutboxEvent:
         self.ttl = int(datetime.utcnow().timestamp()) + 86400
         return self
 
-    def mark_failed(self, error: str) -> "OutboxEvent":
+    def mark_failed(self, error: str) -> OutboxEvent:
         """Mark event as failed with error message."""
         self.status = OutboxStatus.FAILED
         self.last_error = error

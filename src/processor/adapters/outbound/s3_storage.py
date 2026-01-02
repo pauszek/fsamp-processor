@@ -40,7 +40,7 @@ class S3FileStorage(FileStorage):
 
     def __init__(
         self,
-        s3_client: "S3Client",
+        s3_client: S3Client,
         default_kms_key_id: str | None = None,
     ) -> None:
         """

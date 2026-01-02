@@ -1,17 +1,25 @@
 # =============================================================================
-# Domain Events - Pydantic Models
+# Domain Events - Pydantic Models (Schema v1.0.0)
 # =============================================================================
 """
-Event models matching the FSAMP event.schema.json specification.
+Event models matching the FSAMP event.schema.json specification v1.0.0.
 These are the core domain events flowing through the system.
+
+FIPS 140-3 Compliance:
+- Only AES-256-GCM encryption allowed (NIST SP 800-38D)
+- SHA-256 checksums required (FIPS 180-4)
+- All files must be encrypted
 """
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# Schema version for forward compatibility
+SCHEMA_VERSION = "1.0.0"
 
 
 class EventType(StrEnum):
@@ -21,6 +29,13 @@ class EventType(StrEnum):
     FILE_SCANNED = "FILE_SCANNED"
     ANALYSIS_COMPLETED = "ANALYSIS_COMPLETED"
     PROCESSING_FAILED = "PROCESSING_FAILED"
+
+
+class EventSource(StrEnum):
+    """Identifier of the service that produced this event."""
+
+    GATEWAY = "fsamp-gateway"
+    PROCESSOR = "fsamp-processor"
 
 
 class FileMetadata(BaseModel):
@@ -33,6 +48,7 @@ class FileMetadata(BaseModel):
         Field(
             min_length=1,
             max_length=255,
+            pattern=r"^[^<>:\"/\\|?*\x00-\x1f]+$",
             alias="originalFilename",
             description="Original name of the uploaded file",
         ),
@@ -41,19 +57,28 @@ class FileMetadata(BaseModel):
         int,
         Field(
             ge=0,
+            le=104857600,  # 100MB max
             alias="fileSizeBytes",
-            description="Size of the file in bytes",
+            description="Size of the file in bytes (max 100MB)",
         ),
     ]
     mime_type: Annotated[
         str | None,
         Field(
             default=None,
+            pattern=r"^[a-z]+/[a-z0-9.+-]+$",
             alias="mimeType",
             description="MIME type of the file",
-            examples=["application/pdf", "image/png"],
         ),
     ] = None
+    checksum_sha256: Annotated[
+        str,
+        Field(
+            pattern=r"^[a-f0-9]{64}$",
+            alias="checksumSHA256",
+            description="SHA-256 hash of file content (FIPS 180-4)",
+        ),
+    ]
 
 
 class StorageLocation(BaseModel):
@@ -67,7 +92,9 @@ class StorageLocation(BaseModel):
     bucket_name: Annotated[
         str,
         Field(
-            min_length=1,
+            min_length=3,
+            max_length=63,
+            pattern=r"^[a-z0-9][a-z0-9.-]*[a-z0-9]$",
             alias="bucketName",
             description="S3 bucket name",
         ),
@@ -76,10 +103,19 @@ class StorageLocation(BaseModel):
         str,
         Field(
             min_length=1,
+            max_length=1024,
             alias="objectKey",
             description="S3 object key (path)",
         ),
     ]
+    region: Annotated[
+        str | None,
+        Field(
+            default=None,
+            pattern=r"^[a-z]{2}-[a-z]+-\d$",
+            description="AWS region where the bucket is located",
+        ),
+    ] = None
 
     @property
     def s3_uri(self) -> str:
@@ -90,42 +126,44 @@ class StorageLocation(BaseModel):
 class SecurityContext(BaseModel):
     """
     Cryptographic metadata required for FIPS 140-3 compliance.
-    Contains encryption details for the file payload.
+
+    Only AES-256-GCM is permitted per NIST SP 800-38D.
+    All files MUST be encrypted - unencrypted files are rejected.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     is_encrypted: Annotated[
-        bool,
+        Literal[True],  # Must always be True - FIPS requirement
         Field(
-            default=True,
             alias="isEncrypted",
-            description="Whether the file is encrypted",
+            description="Whether the file is encrypted (must be true)",
         ),
-    ] = True
+    ]
     encryption_algorithm: Annotated[
-        str | None,
+        Literal["AES/GCM/NoPadding"],  # Only AES-GCM allowed
         Field(
-            default=None,
             alias="encryptionAlgorithm",
-            description="FIPS-compliant algorithm used for payload encryption",
-            examples=["AES/GCM/NoPadding", "AES/CBC/PKCS5Padding"],
+            description="FIPS 140-3 compliant algorithm (AES-256-GCM only)",
         ),
-    ] = None
+    ]
     kms_key_id: Annotated[
-        str | None,
+        str,
         Field(
-            default=None,
+            pattern=r"^arn:aws:kms:[a-z0-9-]+:\d{12}:key/[a-f0-9-]{36}$",
             alias="kmsKeyId",
-            description="ARN of the AWS KMS key used for envelope encryption",
+            description="ARN of the AWS KMS key for envelope encryption",
         ),
-    ] = None
+    ]
 
 
 class FileEvent(BaseModel):
     """
     Standard event definition for FSAMP platform file processing flow.
+    Schema version: 1.0.0
+
     This is the main event schema used for inter-service communication.
+    Compliant with FIPS 140-3 cryptographic requirements.
     """
 
     model_config = ConfigDict(
@@ -134,25 +172,37 @@ class FileEvent(BaseModel):
         populate_by_name=True,  # Allow both snake_case and camelCase
     )
 
+    schema_version: Annotated[
+        Literal["1.0.0"],
+        Field(
+            alias="schemaVersion",
+            description="Schema version for forward compatibility",
+        ),
+    ]
     event_id: Annotated[
         UUID,
         Field(
             alias="eventId",
-            description="Unique identifier for the event (UUID format)",
+            description="Unique identifier for the event (UUID v4)",
         ),
     ]
     correlation_id: Annotated[
-        str,
+        UUID,
         Field(
-            min_length=1,
             alias="correlationId",
-            description="Trace ID used to track the request across microservices",
+            description="Trace ID for request tracking (UUID v4)",
         ),
     ]
     timestamp: Annotated[
         datetime,
         Field(
             description="Event occurrence timestamp (ISO 8601 UTC)",
+        ),
+    ]
+    source: Annotated[
+        EventSource,
+        Field(
+            description="Service that produced this event",
         ),
     ]
     event_type: Annotated[
@@ -184,12 +234,13 @@ class FileEvent(BaseModel):
         ),
     ]
 
-    def with_new_event_type(self, event_type: EventType) -> "FileEvent":
+    def with_new_event_type(self, event_type: EventType) -> FileEvent:
         """Create a new event with updated event type (immutable pattern)."""
         return self.model_copy(
             update={
                 "event_type": event_type,
                 "timestamp": datetime.utcnow(),
+                "source": EventSource.PROCESSOR,
             }
         )
 
