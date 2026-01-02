@@ -240,12 +240,12 @@ class FileEvent(BaseModel):
     # These properties provide string representations for use at serialization
     # boundaries (DynamoDB, SNS attributes, logging) while keeping the domain
     # model type-safe with UUID.
-    
+
     @property
     def event_id_str(self) -> str:
         """String representation of event_id for serialization boundaries."""
         return str(self.event_id)
-    
+
     @property
     def correlation_id_str(self) -> str:
         """String representation of correlation_id for serialization boundaries."""

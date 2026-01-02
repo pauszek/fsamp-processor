@@ -15,7 +15,6 @@ import json
 import time
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -46,10 +45,10 @@ class TestSQSConsumerIntegration:
         """Test that consumer receives and processes SQS message."""
         # given
         processed_events: list[FileEvent] = []
-        
+
         def handler(event: FileEvent) -> None:
             processed_events.append(event)
-        
+
         consumer = SQSConsumer(
             sqs_client=localstack_sqs_client,
             queue_url=localstack_queue_url,
@@ -58,23 +57,23 @@ class TestSQSConsumerIntegration:
             wait_time_seconds=1,
             visibility_timeout=30,
         )
-        
+
         # Send test message
         event = create_test_event()
         message_body = create_sns_wrapped_message(event)
-        
+
         localstack_sqs_client.send_message(
             QueueUrl=localstack_queue_url,
             MessageBody=message_body,
         )
-        
+
         # when - poll for messages
         consumer._poll_and_process()
-        
+
         # then
         assert len(processed_events) == 1
         assert processed_events[0].event_id == event.event_id
-        
+
         # Verify message was deleted from queue
         response = localstack_sqs_client.receive_message(
             QueueUrl=localstack_queue_url,
@@ -92,7 +91,7 @@ class TestSQSConsumerIntegration:
         # given
         def failing_handler(event: FileEvent) -> None:
             raise RuntimeError("Processing failed")
-        
+
         consumer = SQSConsumer(
             sqs_client=localstack_sqs_client,
             queue_url=localstack_queue_url,
@@ -101,25 +100,25 @@ class TestSQSConsumerIntegration:
             wait_time_seconds=1,
             visibility_timeout=1,  # Short timeout for test
         )
-        
+
         # Send test message
         event = create_test_event()
         message_body = create_sns_wrapped_message(event)
-        
+
         localstack_sqs_client.send_message(
             QueueUrl=localstack_queue_url,
             MessageBody=message_body,
         )
-        
+
         # when - process fails
         try:
             consumer._poll_and_process()
         except Exception:
             pass  # Expected to fail
-        
+
         # then - wait for visibility timeout
         time.sleep(2)
-        
+
         # Message should be visible again
         response = localstack_sqs_client.receive_message(
             QueueUrl=localstack_queue_url,
@@ -137,10 +136,10 @@ class TestSQSConsumerIntegration:
         """Test batch processing of multiple messages."""
         # given
         processed_events: list[FileEvent] = []
-        
+
         def handler(event: FileEvent) -> None:
             processed_events.append(event)
-        
+
         consumer = SQSConsumer(
             sqs_client=localstack_sqs_client,
             queue_url=localstack_queue_url,
@@ -149,7 +148,7 @@ class TestSQSConsumerIntegration:
             wait_time_seconds=1,
             visibility_timeout=30,
         )
-        
+
         # Send 5 test messages
         for i in range(5):
             event = create_test_event()
@@ -158,11 +157,11 @@ class TestSQSConsumerIntegration:
                 QueueUrl=localstack_queue_url,
                 MessageBody=message_body,
             )
-        
+
         # when - poll (may need multiple polls)
         for _ in range(3):
             consumer._poll_and_process()
-        
+
         # then
         assert len(processed_events) == 5
 
@@ -174,10 +173,10 @@ class TestSQSConsumerIntegration:
         """Test that consumer handles empty queue without errors."""
         # given
         processed_events: list[FileEvent] = []
-        
+
         def handler(event: FileEvent) -> None:
             processed_events.append(event)
-        
+
         consumer = SQSConsumer(
             sqs_client=localstack_sqs_client,
             queue_url=localstack_queue_url,
@@ -186,10 +185,10 @@ class TestSQSConsumerIntegration:
             wait_time_seconds=1,
             visibility_timeout=30,
         )
-        
+
         # when - poll empty queue
         consumer._poll_and_process()
-        
+
         # then
         assert len(processed_events) == 0
 
@@ -205,7 +204,7 @@ class TestSQSConsumerIntegration:
             Attributes={"VisibilityTimeout": "5"},
         )
         queue_url = response["QueueUrl"]
-        
+
         # Send message
         event = create_test_event()
         message_body = create_sns_wrapped_message(event)
@@ -213,7 +212,7 @@ class TestSQSConsumerIntegration:
             QueueUrl=queue_url,
             MessageBody=message_body,
         )
-        
+
         # First receive - message should be invisible
         response1 = localstack_sqs_client.receive_message(
             QueueUrl=queue_url,
@@ -221,7 +220,7 @@ class TestSQSConsumerIntegration:
             WaitTimeSeconds=0,
         )
         assert "Messages" in response1
-        
+
         # Immediate second receive - should be empty (message invisible)
         response2 = localstack_sqs_client.receive_message(
             QueueUrl=queue_url,
@@ -229,7 +228,7 @@ class TestSQSConsumerIntegration:
             WaitTimeSeconds=0,
         )
         assert "Messages" not in response2 or len(response2["Messages"]) == 0
-        
+
         # Cleanup
         localstack_sqs_client.delete_queue(QueueUrl=queue_url)
 
@@ -251,13 +250,13 @@ class TestSQSSNSIntegration:
             QueueUrl=localstack_queue_url,
             AttributeNames=["QueueArn"],
         )["Attributes"]["QueueArn"]
-        
+
         localstack_sns_client.subscribe(
             TopicArn=localstack_topic_arn,
             Protocol="sqs",
             Endpoint=queue_arn,
         )
-        
+
         # when - publish to SNS
         event = create_test_event()
         localstack_sns_client.publish(
@@ -270,19 +269,19 @@ class TestSQSSNSIntegration:
                 },
             },
         )
-        
+
         # then - SQS should receive the message
         time.sleep(1)  # Allow propagation
-        
+
         response = localstack_sqs_client.receive_message(
             QueueUrl=localstack_queue_url,
             MaxNumberOfMessages=1,
             WaitTimeSeconds=5,
         )
-        
+
         assert "Messages" in response
         assert len(response["Messages"]) == 1
-        
+
         # SNS wraps the message
         body = json.loads(response["Messages"][0]["Body"])
         assert "Message" in body  # SNS envelope
