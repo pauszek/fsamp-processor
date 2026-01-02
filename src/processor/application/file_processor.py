@@ -110,16 +110,16 @@ class FileProcessorService:
             NonRetryableError: If processing fails (non-retryable).
         """
         log = logger.bind(
-            event_id=str(event.event_id),
-            correlation_id=event.correlation_id,
+            event_id=event.event_id_str,
+            correlation_id=event.correlation_id_str,
             event_type=event.event_type.value,
             filename=event.file_metadata.original_filename,
         )
 
         started_at = datetime.utcnow()
         result = ProcessingResult(
-            event_id=str(event.event_id),
-            correlation_id=event.correlation_id,
+            event_id=event.event_id_str,
+            correlation_id=event.correlation_id_str,
             status=ProcessingStatus.IN_PROGRESS,
             started_at=started_at,
         )
@@ -153,7 +153,7 @@ class FileProcessorService:
             raise ProcessingError(
                 message=str(e),
                 event_id=str(event.event_id),
-                correlation_id=event.correlation_id,
+                correlation_id=str(event.correlation_id),
                 retryable=True,
                 cause=e,
             ) from e
@@ -164,7 +164,7 @@ class FileProcessorService:
             raise ProcessingError(
                 message=f"Unexpected error: {e}",
                 event_id=str(event.event_id),
-                correlation_id=event.correlation_id,
+                correlation_id=str(event.correlation_id),
                 retryable=True,
                 cause=e,
             ) from e
@@ -222,7 +222,7 @@ class FileProcessorService:
         if analysis_result.is_safe:
             outbox_event = OutboxEvent.for_file_processed(
                 file_id=str(event.event_id),
-                correlation_id=event.correlation_id,
+                correlation_id=str(event.correlation_id),
                 file_hash=file_hash,
                 is_safe=True,
                 bucket_name=event.storage_location.bucket_name,
@@ -231,7 +231,7 @@ class FileProcessorService:
         else:
             outbox_event = OutboxEvent.for_file_quarantined(
                 file_id=str(event.event_id),
-                correlation_id=event.correlation_id,
+                correlation_id=str(event.correlation_id),
                 reason="File failed security analysis",
                 findings=analysis_result.findings,
             )
@@ -341,7 +341,7 @@ class FileProcessorService:
         return MetadataRecord(
             file_id=str(event.event_id),
             timestamp=timestamp,
-            correlation_id=event.correlation_id,
+            correlation_id=str(event.correlation_id),
             original_filename=event.file_metadata.original_filename,
             file_size_bytes=event.file_metadata.file_size_bytes,
             mime_type=event.file_metadata.mime_type,
@@ -370,7 +370,7 @@ class FileProcessorService:
             # Create outbox event for failure
             outbox_event = OutboxEvent.for_file_failed(
                 file_id=str(event.event_id),
-                correlation_id=event.correlation_id,
+                correlation_id=str(event.correlation_id),
                 error_code=error_code,
                 error_message=error_message,
             )

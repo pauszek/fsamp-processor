@@ -121,9 +121,13 @@ ignore = [
 "tests/**/*" = [
     "S101",   # Allow assert
     "S105",   # Allow hardcoded passwords (fake AWS creds for moto)
+    "S106",   # Allow hardcoded passwords in arguments (LocalStack creds)
+    "S110",   # Allow try-except-pass (expected failures in tests)
     "ARG001", # Allow unused arguments (fixtures)
     "ARG002", # Allow unused method arguments (mocks)
+    "B007",   # Allow unused loop variables
     "B017",   # Allow blind exceptions
+    "SIM105", # Allow try-except-pass instead of contextlib.suppress
     "F841",   # Allow unused variables (mock assertions)
     "E501",   # Allow long lines (SHA256 checksums)
 ]

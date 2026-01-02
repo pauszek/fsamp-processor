@@ -63,8 +63,8 @@ class SNSEventPublisher(EventPublisher):
     def publish(self, event: FileEvent) -> str:
         """Publish a single event to SNS."""
         log = logger.bind(
-            event_id=str(event.event_id),
-            correlation_id=event.correlation_id,
+            event_id=event.event_id_str,
+            correlation_id=event.correlation_id_str,
             event_type=event.event_type,
         )
 
@@ -80,7 +80,7 @@ class SNSEventPublisher(EventPublisher):
                 },
                 "correlationId": {
                     "DataType": "String",
-                    "StringValue": event.correlation_id,
+                    "StringValue": event.correlation_id_str,
                 },
             }
 

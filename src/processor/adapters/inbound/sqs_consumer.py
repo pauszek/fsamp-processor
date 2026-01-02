@@ -220,8 +220,8 @@ class SQSConsumer(MessageConsumer):
             # Extract FileEvent from message
             event = wrapper.get_file_event()
             log = log.bind(
-                event_id=str(event.event_id),
-                correlation_id=event.correlation_id,
+                event_id=event.event_id_str,
+                correlation_id=event.correlation_id_str,
                 event_type=event.event_type,
             )
             log.info("Processing event")

@@ -64,11 +64,14 @@ def mock_aws_services() -> Generator[None]:
 def s3_client(mock_aws_services: None) -> boto3.client:
     """Create mock S3 client."""
     client = boto3.client("s3", region_name="us-west-2")
-    # Create test bucket
-    client.create_bucket(
-        Bucket="test-bucket",
-        CreateBucketConfiguration={"LocationConstraint": "us-west-2"},
-    )
+    # Create test bucket (idempotent - ignore if already exists)
+    try:
+        client.create_bucket(
+            Bucket="test-bucket",
+            CreateBucketConfiguration={"LocationConstraint": "us-west-2"},
+        )
+    except client.exceptions.BucketAlreadyOwnedByYou:
+        pass  # Bucket exists from previous test in same mock session
     return client
 
 

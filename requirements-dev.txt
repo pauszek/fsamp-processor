@@ -26,3 +26,7 @@ pre-commit>=4.0.0
 
 # LocalStack testing
 localstack-client>=2.6.0
+
+# Integration testing with Testcontainers
+testcontainers[localstack]>=4.8.0
+testcontainers[localstack]>=4.8.0
