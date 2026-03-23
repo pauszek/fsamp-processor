@@ -29,8 +29,7 @@ from processor.domain.events import (
     StorageLocation,
 )
 
-# Import LocalStack fixtures
-pytest_plugins = ["tests.integration.conftest_localstack"]
+# LocalStack fixtures are automatically loaded from conftest.py in this directory
 
 
 @pytest.mark.integration
@@ -68,7 +67,9 @@ class TestSQSConsumerIntegration:
         )
 
         # when - poll for messages
-        consumer._poll_and_process()
+        messages = consumer._receive_messages()
+        for msg in messages:
+            consumer._process_message(msg)
 
         # then
         assert len(processed_events) == 1
@@ -88,6 +89,7 @@ class TestSQSConsumerIntegration:
         localstack_queue_url,
     ) -> None:
         """Test that message becomes visible again if handler fails."""
+
         # given
         def failing_handler(event: FileEvent) -> None:
             raise RuntimeError("Processing failed")
@@ -112,7 +114,9 @@ class TestSQSConsumerIntegration:
 
         # when - process fails
         try:
-            consumer._poll_and_process()
+            messages = consumer._receive_messages()
+            for msg in messages:
+                consumer._process_message(msg)
         except Exception:
             pass  # Expected to fail
 
@@ -160,7 +164,9 @@ class TestSQSConsumerIntegration:
 
         # when - poll (may need multiple polls)
         for _ in range(3):
-            consumer._poll_and_process()
+            messages = consumer._receive_messages()
+            for msg in messages:
+                consumer._process_message(msg)
 
         # then
         assert len(processed_events) == 5
@@ -187,7 +193,9 @@ class TestSQSConsumerIntegration:
         )
 
         # when - poll empty queue
-        consumer._poll_and_process()
+        messages = consumer._receive_messages()
+        for msg in messages:
+            consumer._process_message(msg)
 
         # then
         assert len(processed_events) == 0
@@ -251,6 +259,25 @@ class TestSQSSNSIntegration:
             AttributeNames=["QueueArn"],
         )["Attributes"]["QueueArn"]
 
+        # Allow SNS to send messages to SQS (required when ENFORCE_IAM=1)
+        queue_policy = json.dumps(
+            {
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {"Service": "sns.amazonaws.com"},
+                        "Action": "sqs:SendMessage",
+                        "Resource": queue_arn,
+                        "Condition": {"ArnEquals": {"aws:SourceArn": localstack_topic_arn}},
+                    }
+                ]
+            }
+        )
+        localstack_sqs_client.set_queue_attributes(
+            QueueUrl=localstack_queue_url,
+            Attributes={"Policy": queue_policy},
+        )
+
         localstack_sns_client.subscribe(
             TopicArn=localstack_topic_arn,
             Protocol="sqs",
@@ -291,6 +318,7 @@ class TestSQSSNSIntegration:
 # Helper Functions
 # =============================================================================
 
+
 def create_test_event() -> FileEvent:
     """Create a test FileEvent."""
     return FileEvent(
@@ -313,7 +341,7 @@ def create_test_event() -> FileEvent:
         security_context=SecurityContext(
             is_encrypted=True,
             encryption_algorithm="AES/GCM/NoPadding",
-            kms_key_id="arn:aws:kms:us-west-2:123456789012:key/test-key",
+            kms_key_id="arn:aws:kms:us-west-2:123456789012:key/a1b2c3d4-e5f6-7890-abcd-ef1234567890",
         ),
     )
 

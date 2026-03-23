@@ -22,8 +22,9 @@ echo "Build Date: ${BUILD_DATE}"
 echo "Git Ref: ${VCS_REF}"
 echo ""
 
-# Build the image
+# Build the image (production target only)
 docker build \
+    --target production \
     --build-arg BUILD_DATE="${BUILD_DATE}" \
     --build-arg VCS_REF="${VCS_REF}" \
     --tag "${IMAGE_NAME}:${IMAGE_TAG}" \
@@ -40,7 +41,7 @@ if [ -n "${REGISTRY}" ]; then
     echo "Tagging for registry: ${REGISTRY}"
     docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
     docker tag "${IMAGE_NAME}:${VCS_REF}" "${REGISTRY}/${IMAGE_NAME}:${VCS_REF}"
-    
+
     echo ""
     echo "To push to registry, run:"
     echo "  docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"

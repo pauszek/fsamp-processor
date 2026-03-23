@@ -6,10 +6,12 @@ Core domain models representing the state and results of file processing.
 Implements Outbox Pattern for reliable event publishing.
 """
 
+from __future__ import annotations
+
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -89,7 +91,7 @@ class ProcessingResult:
             correlation_id=self.correlation_id,
             status=status,
             started_at=self.started_at,
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(UTC),
             error_message=error_message,
             error_code=error_code,
             retry_count=self.retry_count,
@@ -125,7 +127,7 @@ class AnalysisResult:
     is_safe: bool
     scan_engine: str = "internal"
     findings: list[str] = field(default_factory=list)
-    analyzed_at: datetime = field(default_factory=datetime.utcnow)
+    analyzed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -288,7 +290,7 @@ class OutboxEvent:
     status: OutboxStatus = OutboxStatus.PENDING
 
     # Timestamps
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     published_at: str | None = None
 
     # Retry tracking for failed publishes
@@ -341,7 +343,7 @@ class OutboxEvent:
                 "isSafe": is_safe,
                 "bucketName": bucket_name,
                 "objectKey": object_key,
-                "processedAt": datetime.utcnow().isoformat(),
+                "processedAt": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -362,7 +364,7 @@ class OutboxEvent:
                 "correlationId": correlation_id,
                 "errorCode": error_code,
                 "errorMessage": error_message,
-                "failedAt": datetime.utcnow().isoformat(),
+                "failedAt": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -383,7 +385,7 @@ class OutboxEvent:
                 "correlationId": correlation_id,
                 "reason": reason,
                 "findings": findings,
-                "quarantinedAt": datetime.utcnow().isoformat(),
+                "quarantinedAt": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -445,9 +447,9 @@ class OutboxEvent:
     def mark_published(self) -> OutboxEvent:
         """Mark event as published (returns new instance for immutability in tests)."""
         self.status = OutboxStatus.PUBLISHED
-        self.published_at = datetime.utcnow().isoformat()
+        self.published_at = datetime.now(UTC).isoformat()
         # Set TTL to 24 hours from now for cleanup
-        self.ttl = int(datetime.utcnow().timestamp()) + 86400
+        self.ttl = int(datetime.now(UTC).timestamp()) + 86400
         return self
 
     def mark_failed(self, error: str) -> OutboxEvent:

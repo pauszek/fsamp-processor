@@ -10,7 +10,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from botocore.exceptions import ClientError
@@ -51,7 +51,7 @@ class SQSConsumer(MessageConsumer):
         self,
         sqs_client: SQSClient,
         queue_url: str,
-        handler: Callable[[FileEvent], None],
+        handler: Callable[[FileEvent], Any],
         max_messages: int = 10,
         wait_time_seconds: int = 20,
         visibility_timeout: int = 300,
@@ -198,7 +198,7 @@ class SQSConsumer(MessageConsumer):
             AttributeNames=["All"],
             MessageAttributeNames=["All"],
         )
-        return response.get("Messages", [])
+        return cast(list[dict[str, Any]], response.get("Messages", []))
 
     def _process_message(self, raw_message: dict[str, Any]) -> None:
         """Process a single SQS message."""
@@ -214,7 +214,7 @@ class SQSConsumer(MessageConsumer):
                 receipt_handle=receipt_handle,
                 body=raw_message["Body"],
                 attributes=raw_message.get("Attributes", {}),
-                message_attributes=raw_message.get("MessageAttributes", {}),
+                MessageAttributes=raw_message.get("MessageAttributes", {}),
             )
 
             # Extract FileEvent from message
@@ -324,7 +324,7 @@ class SQSConsumer(MessageConsumer):
                     "ApproximateNumberOfMessagesDelayed",
                 ],
             )
-            return response.get("Attributes", {})
+            return cast(dict[str, str], response.get("Attributes", {}))
         except ClientError as e:
             logger.error("Failed to get queue attributes", error=str(e))
             return {}

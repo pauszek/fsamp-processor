@@ -10,15 +10,8 @@ import pytest
 
 from processor.application.file_processor import FileProcessorService
 from processor.domain.events import EventType, FileEvent
-from processor.domain.exceptions import (
-    NonRetryableError,
-    ProcessingError,
-    StorageError,
-)
-from processor.domain.models import (
-    FileContent,
-    ProcessingStatus,
-)
+from processor.domain.exceptions import NonRetryableError, ProcessingError, StorageError
+from processor.domain.models import FileContent, ProcessingStatus
 
 
 class TestFileProcessorServiceInit:
@@ -128,9 +121,7 @@ class TestFileProcessorServiceHandle:
 
     def test_handle_file_too_large(self, mock_dependencies, sample_file_event: FileEvent) -> None:
         """Test handling file that exceeds size limit."""
-        from processor.domain.events import (
-            FileMetadata,
-        )
+        from processor.domain.events import FileMetadata
 
         # Create event with large file size
         large_file_event = FileEvent(

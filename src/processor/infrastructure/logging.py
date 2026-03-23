@@ -8,7 +8,7 @@ Outputs JSON in production, pretty console in development.
 
 import logging
 import sys
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -98,7 +98,9 @@ def get_correlation_logger(correlation_id: str) -> structlog.stdlib.BoundLogger:
     Returns:
         A bound logger with the correlation ID.
     """
-    return structlog.get_logger().bind(correlation_id=correlation_id)
+    return cast(
+        structlog.stdlib.BoundLogger, structlog.get_logger().bind(correlation_id=correlation_id)
+    )
 
 
 def bind_context(**kwargs: Any) -> None:

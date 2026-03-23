@@ -14,11 +14,7 @@ from uuid import uuid4
 
 import pytest
 
-from processor.domain.events import (
-    SCHEMA_VERSION,
-    EventType,
-    FileEvent,
-)
+from processor.domain.events import SCHEMA_VERSION, EventType, FileEvent
 from processor.domain.models import ProcessingResult, ProcessingStatus
 
 # =============================================================================

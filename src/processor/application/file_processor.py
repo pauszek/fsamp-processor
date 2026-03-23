@@ -9,17 +9,13 @@ Implements Outbox Pattern for reliable event publishing - metadata and outbox
 events are written atomically in a single DynamoDB transaction.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 
 from processor.domain.events import EventType, FileEvent
-from processor.domain.exceptions import (
-    NonRetryableError,
-    ProcessingError,
-    StorageError,
-)
+from processor.domain.exceptions import NonRetryableError, ProcessingError, StorageError
 from processor.domain.models import (
     AnalysisResult,
     FileContent,
@@ -116,7 +112,7 @@ class FileProcessorService:
             filename=event.file_metadata.original_filename,
         )
 
-        started_at = datetime.utcnow()
+        started_at = datetime.now(UTC)
         result = ProcessingResult(
             event_id=event.event_id_str,
             correlation_id=event.correlation_id_str,
@@ -184,7 +180,7 @@ class FileProcessorService:
             )
 
         # Create initial metadata record
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         metadata_record = self._create_metadata_record(event, timestamp)
         metadata_record.status = ProcessingStatus.IN_PROGRESS
 
@@ -216,7 +212,7 @@ class FileProcessorService:
         metadata_record.is_safe = analysis_result.is_safe
         metadata_record.scan_findings = analysis_result.findings
         metadata_record.status = ProcessingStatus.COMPLETED
-        metadata_record.processed_at = datetime.utcnow().isoformat()
+        metadata_record.processed_at = datetime.now(UTC).isoformat()
 
         # Create outbox event for completion
         if analysis_result.is_safe:
@@ -272,7 +268,7 @@ class FileProcessorService:
     ) -> ProcessingResult:
         """Process a file that has been scanned externally."""
         # Just update metadata for externally scanned files
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         metadata_record = self._create_metadata_record(event, timestamp)
         metadata_record.status = ProcessingStatus.COMPLETED
         metadata_record.processed_at = timestamp
@@ -361,7 +357,7 @@ class FileProcessorService:
         """Handle processing failure - update metadata and publish failure event."""
         try:
             # Create metadata record with failure status
-            timestamp = datetime.utcnow().isoformat()
+            timestamp = datetime.now(UTC).isoformat()
             record = self._create_metadata_record(event, timestamp)
             record.status = ProcessingStatus.FAILED
             record.error_message = error_message

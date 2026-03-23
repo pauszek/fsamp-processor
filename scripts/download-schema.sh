@@ -38,7 +38,7 @@ mkdir -p "$SCHEMA_DIR"
 if [[ -f "$SIBLING_SCHEMA" ]]; then
     cp "$SIBLING_SCHEMA" "${SCHEMA_DIR}/event.schema.json"
     echo "✅ Schema copied from sibling repo"
-    
+
     # Verify JSON is valid
     if python3 -c "import json; json.load(open('${SCHEMA_DIR}/event.schema.json'))" 2>/dev/null; then
         echo "✅ Schema JSON is valid"
@@ -46,7 +46,7 @@ if [[ -f "$SIBLING_SCHEMA" ]]; then
         echo "❌ Error: Schema file is not valid JSON"
         exit 1
     fi
-    
+
     # Show schema info
     echo ""
     echo "📋 Schema Info:"

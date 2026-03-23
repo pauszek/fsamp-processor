@@ -10,16 +10,20 @@ import pytest
 from processor.adapters.outbound.dynamodb_repo import DynamoDBMetadataRepository
 from processor.domain.models import MetadataRecord, ProcessingStatus
 
+pytestmark = pytest.mark.integration
+
 
 class TestDynamoDBMetadataRepository:
     """Integration tests for DynamoDB metadata repository."""
 
     @pytest.fixture
-    def repo(self, dynamodb_client, test_table_name: str) -> DynamoDBMetadataRepository:
+    def repo(
+        self, localstack_dynamodb_client, localstack_table_name: str
+    ) -> DynamoDBMetadataRepository:
         """Create DynamoDB repository."""
         return DynamoDBMetadataRepository(
-            dynamodb_client=dynamodb_client,
-            table_name=test_table_name,
+            dynamodb_client=localstack_dynamodb_client,
+            table_name=localstack_table_name,
         )
 
     @pytest.fixture

@@ -1,65 +1,128 @@
 # =============================================================================
-# FSAMP Processor - Lambda Container Image (Chainguard)
+# FSAMP Processor - Lambda Container Image
 # =============================================================================
-# Docker image for AWS Lambda deployment using Lambda Runtime Interface Client.
-# Based on Chainguard Python image - hardened, minimal, zero known CVEs.
+# Enterprise-grade Lambda container image with FIPS 140-3 OpenSSL provider.
+#
+# Uses the official AWS Lambda base image (AL2023) which includes:
+#   - Lambda Runtime Interface Client (RIC)
+#   - Lambda Runtime Interface Emulator (RIE) for local testing
+#   - glibc, OpenSSL 3.x, CA certificates
+#
+# FIPS strategy:
+#   1. OpenSSL FIPS provider activated for all `ssl` / `cryptography` operations
+#   2. boto3 FIPS endpoints (`use_fips_endpoint=True`) for AWS API calls
+#   3. KMS CMK for envelope encryption of environment variables
 #
 # Build:
 #   docker build -f Dockerfile.lambda -t fsamp-processor-lambda .
 #
-# Local testing with RIE (Runtime Interface Emulator):
+# Push to ECR:
+#   aws ecr get-login-password | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
+#   docker tag fsamp-processor-lambda:latest <account>.dkr.ecr.<region>.amazonaws.com/fsamp-<env>-processor:latest
+#   docker push <account>.dkr.ecr.<region>.amazonaws.com/fsamp-<env>-processor:latest
+#
+# Local testing with RIE:
 #   docker run -p 9000:8080 fsamp-processor-lambda
 #   curl -X POST "http://localhost:9000/2015-03-31/functions/function/invocations" \
 #     -d @events/sample-sqs-event.json
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Stage 1: Builder - compile dependencies using glibc-compatible image
+# Stage 1: Builder — install dependencies in a venv
 # -----------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev AS builder
+FROM public.ecr.aws/lambda/python:3.14 AS builder
 
-USER root
+# Install build dependencies (gcc for C extensions like cryptography)
+RUN dnf install -y gcc python3-devel openssl-devel && \
+    dnf clean all
+
+# Create virtual env for clean dependency isolation
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /build
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Install the application package itself
 COPY pyproject.toml .
 COPY src/ src/
-
-# Install dependencies to /asset directory
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --target /asset . && \
-    pip install --no-cache-dir --target /asset awslambdaric
+RUN pip install --no-cache-dir .
 
 # -----------------------------------------------------------------------------
-# Stage 2: Lambda Runtime - Chainguard minimal (zero CVE)
+# Stage 2: Runtime — minimal Lambda image with FIPS OpenSSL
 # -----------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest
-
-# Set up Lambda runtime directory structure
-ENV LAMBDA_TASK_ROOT=/var/task
-ENV LAMBDA_RUNTIME_DIR=/var/runtime
-WORKDIR ${LAMBDA_TASK_ROOT}
-
-# Labels
+FROM public.ecr.aws/lambda/python:3.14
+# Labels (OCI standard)
 LABEL maintainer="Pauszek <pauszek@github.io>"
 LABEL org.opencontainers.image.title="FSAMP Processor Lambda"
-LABEL org.opencontainers.image.description="Event-driven file processor Lambda"
+LABEL org.opencontainers.image.description="Event-driven file processor with FIPS 140-3 OpenSSL"
 LABEL org.opencontainers.image.version="0.1.0"
+LABEL org.opencontainers.image.source="https://github.com/pauszek/fsamp-processor"
 
-# Copy dependencies (includes awslambdaric)
-COPY --from=builder /asset ${LAMBDA_TASK_ROOT}
+# Install OpenSSL tools for fipsinstall (already present in AL2023, ensure module exists)
+RUN dnf install -y openssl openssl-libs && \
+    dnf clean all
 
-# Copy source code
+# ---------------------------------------------------------------------------
+# Configure OpenSSL FIPS provider
+# ---------------------------------------------------------------------------
+# AL2023 ships OpenSSL 3.x with the FIPS provider module pre-built.
+# We activate it so every TLS handshake and hash operation uses the
+# FIPS 140-3 validated code path.
+# ---------------------------------------------------------------------------
+RUN FIPS_MODULE=$(find /usr/lib64 -name 'fips.so' 2>/dev/null | head -1) && \
+    if [ -n "$FIPS_MODULE" ]; then \
+        openssl fipsinstall \
+            -out /etc/pki/tls/fipsmodule.cnf \
+            -module "$FIPS_MODULE"; \
+    else \
+        echo "WARNING: FIPS module not found — running without FIPS provider" >&2; \
+    fi
+
+# Custom OpenSSL config that activates FIPS + base providers
+COPY <<'FIPSCONF' /etc/pki/tls/openssl-fips.cnf
+# OpenSSL configuration — FIPS 140-3 provider activated
+config_diagnostics = 1
+openssl_conf = openssl_init
+
+.include /etc/pki/tls/fipsmodule.cnf
+
+[openssl_init]
+providers = provider_sect
+alg_section = algorithm_sect
+
+[provider_sect]
+fips = fips_sect
+base = base_sect
+
+[base_sect]
+activate = 1
+
+[algorithm_sect]
+default_properties = fips=yes
+FIPSCONF
+
+# Point OpenSSL at our FIPS config
+ENV OPENSSL_CONF=/etc/pki/tls/openssl-fips.cnf
+
+# Copy the venv from the builder stage
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy application source code into Lambda task root
 COPY src/processor ${LAMBDA_TASK_ROOT}/processor
 
-# Lambda Runtime Interface Client entrypoint
-ENTRYPOINT ["python", "-m", "awslambdaric"]
-CMD ["processor.lambda_handler.lambda_handler"]
-
-# =============================================================================
-# Environment variables (can be overridden at runtime)
-# =============================================================================
+# ---------------------------------------------------------------------------
+# Environment variables
+# ---------------------------------------------------------------------------
 ENV POWERTOOLS_SERVICE_NAME=fsamp-processor \
     POWERTOOLS_METRICS_NAMESPACE=FSAMP/Processor \
     POWERTOOLS_LOG_LEVEL=INFO \
     LOG_FORMAT=json \
-    ENVIRONMENT=prod
+    ENVIRONMENT=prod \
+    PYTHONUNBUFFERED=1
+
+# Lambda handler — module path relative to LAMBDA_TASK_ROOT
+CMD ["processor.lambda_handler.lambda_handler"]

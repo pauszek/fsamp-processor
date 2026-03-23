@@ -6,7 +6,7 @@ S3 implementation of the FileStorage port.
 Handles file downloads/uploads with server-side encryption.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from botocore.exceptions import ClientError
@@ -142,7 +142,7 @@ class S3FileStorage(FileStorage):
         try:
             log.info("Uploading file to S3")
 
-            put_params: dict = {
+            put_params: dict[str, Any] = {
                 "Bucket": bucket_name,
                 "Key": object_key,
                 "Body": data,
@@ -154,13 +154,18 @@ class S3FileStorage(FileStorage):
             if metadata:
                 put_params["Metadata"] = metadata
 
-            # Use KMS encryption if key is configured
+            # Enforce KMS encryption (FedRAMP SC-13, SC-28)
             if self._default_kms_key_id:
                 put_params["ServerSideEncryption"] = "aws:kms"
                 put_params["SSEKMSKeyId"] = self._default_kms_key_id
             else:
-                # Fallback to SSE-S3
-                put_params["ServerSideEncryption"] = "AES256"
+                raise StorageError(
+                    message="KMS key is required for S3 uploads (FedRAMP SC-13). "
+                    "Set KMS_KEY_ID environment variable.",
+                    storage_type="s3",
+                    operation="upload",
+                    resource=f"s3://{bucket_name}/{object_key}",
+                )
 
             response = self._client.put_object(**put_params)
             etag = response.get("ETag", "").strip('"')
@@ -268,7 +273,7 @@ class S3FileStorage(FileStorage):
         try:
             log.info("Copying file in S3")
 
-            copy_params: dict = {
+            copy_params: dict[str, Any] = {
                 "Bucket": dest_bucket,
                 "Key": dest_key,
                 "CopySource": {"Bucket": source_bucket, "Key": source_key},

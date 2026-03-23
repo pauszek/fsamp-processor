@@ -117,9 +117,9 @@ class TestEventSchemaContract:
     def test_schema_version_matches(self, event_schema: dict) -> None:
         """Verify schema version is 1.0.0."""
         schema_version = event_schema["properties"]["schemaVersion"]["const"]
-        assert schema_version == SCHEMA_VERSION, (
-            f"Schema version mismatch. Expected: {SCHEMA_VERSION}, Got: {schema_version}"
-        )
+        assert (
+            schema_version == SCHEMA_VERSION
+        ), f"Schema version mismatch. Expected: {SCHEMA_VERSION}, Got: {schema_version}"
 
     def test_domain_event_matches_schema(
         self, event_schema: dict, sample_file_event: FileEvent
@@ -167,9 +167,9 @@ class TestEventSchemaContract:
         allowed_sources = set(event_schema["properties"]["source"]["enum"])
         expected_sources = {e.value for e in EventSource}
 
-        assert allowed_sources == expected_sources, (
-            f"Source enum mismatch. Schema: {allowed_sources}, Domain: {expected_sources}"
-        )
+        assert (
+            allowed_sources == expected_sources
+        ), f"Source enum mismatch. Schema: {allowed_sources}, Domain: {expected_sources}"
 
     @pytest.mark.parametrize("event_type", list(EventType))
     def test_all_event_types_produce_valid_json(
@@ -190,18 +190,18 @@ class TestFIPSCompliance:
     def test_encryption_is_mandatory(self, event_schema: dict) -> None:
         """Verify isEncrypted must always be true (FIPS requirement)."""
         is_encrypted = event_schema["properties"]["securityContext"]["properties"]["isEncrypted"]
-        assert is_encrypted.get("const") is True, (
-            "isEncrypted must be const: true for FIPS compliance"
-        )
+        assert (
+            is_encrypted.get("const") is True
+        ), "isEncrypted must be const: true for FIPS compliance"
 
     def test_only_aes_gcm_allowed(self, event_schema: dict) -> None:
         """Verify only AES-256-GCM is allowed (NIST SP 800-38D)."""
         encryption_alg = event_schema["properties"]["securityContext"]["properties"][
             "encryptionAlgorithm"
         ]
-        assert encryption_alg.get("const") == "AES/GCM/NoPadding", (
-            "Only AES/GCM/NoPadding should be allowed for FIPS 140-3"
-        )
+        assert (
+            encryption_alg.get("const") == "AES/GCM/NoPadding"
+        ), "Only AES/GCM/NoPadding should be allowed for FIPS 140-3"
 
     def test_kms_key_required(self, event_schema: dict) -> None:
         """Verify KMS key is required for envelope encryption."""
@@ -213,9 +213,9 @@ class TestFIPSCompliance:
     def test_checksum_sha256_required(self, event_schema: dict) -> None:
         """Verify SHA-256 checksum is required (FIPS 180-4)."""
         file_metadata_required = event_schema["properties"]["fileMetadata"].get("required", [])
-        assert "checksumSHA256" in file_metadata_required, (
-            "checksumSHA256 must be required for FIPS 180-4 compliance"
-        )
+        assert (
+            "checksumSHA256" in file_metadata_required
+        ), "checksumSHA256 must be required for FIPS 180-4 compliance"
 
     def test_checksum_format_is_valid(self, sample_file_event: FileEvent) -> None:
         """Verify checksum is valid SHA-256 format (64 hex chars)."""

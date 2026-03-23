@@ -10,10 +10,7 @@ import pytest
 from botocore.exceptions import ClientError
 
 from processor.adapters.inbound.sqs_consumer import SQSConsumer
-from processor.domain.exceptions import (
-    MessageError,
-    NonRetryableError,
-)
+from processor.domain.exceptions import MessageError, NonRetryableError
 
 # Valid KMS ARN format: arn:aws:kms:{region}:{account}:key/{uuid}
 VALID_KMS_KEY_ID = "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"

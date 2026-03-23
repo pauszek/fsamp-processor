@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, cast
 
 from aws_lambda_powertools import Logger, Metrics, Tracer
 from aws_lambda_powertools.metrics import MetricUnit
@@ -188,7 +188,7 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         )
         tracer.put_annotation("event_id", str(file_event.event_id))
         tracer.put_annotation("event_type", file_event.event_type.value)
-        tracer.put_annotation("correlation_id", file_event.correlation_id)
+        tracer.put_annotation("correlation_id", str(file_event.correlation_id))
 
         # Record file size metric
         file_size_bytes = file_event.file_metadata.file_size_bytes
@@ -291,7 +291,7 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
 @logger.inject_lambda_context(log_event=True)
 @tracer.capture_lambda_handler
 @metrics.log_metrics(capture_cold_start_metric=True)
-@batch_processor(record_handler=record_handler, processor=processor)
+@batch_processor(record_handler=record_handler, processor=processor)  # type: ignore[untyped-decorator]
 def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
     """
     AWS Lambda handler for SQS-triggered file processing.
@@ -327,7 +327,7 @@ def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, A
 
     # The @batch_processor decorator handles processing and returns
     # {"batchItemFailures": [...]} for partial batch response
-    return processor.response()
+    return cast(dict[str, Any], processor.response())
 
 
 # =============================================================================
@@ -386,7 +386,7 @@ if __name__ == "__main__":
         invoked_function_arn = "arn:aws:lambda:us-west-2:123456789:function:test"
         aws_request_id = "test-request-id"
 
-        def get_remaining_time_in_millis(self):
+        def get_remaining_time_in_millis(self) -> int:
             return 300000
 
     print("Testing Lambda handler locally...")

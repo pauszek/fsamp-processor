@@ -8,7 +8,7 @@ and the Python cryptography library.
 """
 
 import hashlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from botocore.exceptions import ClientError
@@ -95,7 +95,7 @@ class KMSCryptoProvider(CryptoProvider):
             Tuple of (plaintext_key, encrypted_key).
         """
         try:
-            params: dict = {
+            params: dict[str, Any] = {
                 "KeyId": self._key_id,
                 "KeySpec": "AES_256",  # FIPS compliant
             }
@@ -136,7 +136,7 @@ class KMSCryptoProvider(CryptoProvider):
     ) -> bytes:
         """Decrypt a data encryption key using KMS."""
         try:
-            params: dict = {
+            params: dict[str, Any] = {
                 "CiphertextBlob": encrypted_key,
                 "KeyId": self._key_id,
             }
@@ -200,7 +200,7 @@ class KMSCryptoProvider(CryptoProvider):
 
             # Build envelope: key_len + encrypted_key + nonce + ciphertext
             key_len_bytes = len(encrypted_key).to_bytes(4, byteorder="big")
-            envelope = key_len_bytes + encrypted_key + nonce + ciphertext
+            envelope = cast(bytes, key_len_bytes + encrypted_key + nonce + ciphertext)
 
             logger.debug(
                 "Data encrypted",
@@ -269,7 +269,7 @@ class KMSCryptoProvider(CryptoProvider):
                 plaintext_size=len(plaintext),
             )
 
-            return plaintext
+            return cast(bytes, plaintext)
 
         except Exception as e:
             if isinstance(e, CryptoError):
@@ -339,7 +339,7 @@ class KMSCryptoProvider(CryptoProvider):
             )
             return False
 
-    def get_key_metadata(self) -> dict:
+    def get_key_metadata(self) -> dict[str, Any]:
         """Get metadata about the KMS key."""
         try:
             response = self._client.describe_key(KeyId=self._key_id)
@@ -415,7 +415,7 @@ class LocalCryptoProvider(CryptoProvider):
         ciphertext = aesgcm.encrypt(nonce, plaintext, None)
 
         key_len_bytes = len(encrypted_key).to_bytes(4, byteorder="big")
-        return key_len_bytes + encrypted_key + nonce + ciphertext
+        return cast(bytes, key_len_bytes + encrypted_key + nonce + ciphertext)
 
     def decrypt(self, ciphertext: bytes, context: dict[str, str] | None = None) -> bytes:
         """Decrypt using local key."""
@@ -434,7 +434,7 @@ class LocalCryptoProvider(CryptoProvider):
         plaintext_key = bytes(a ^ b for a, b in zip(encrypted_key, self._master_key * 2))
 
         aesgcm = AESGCM(plaintext_key)
-        return aesgcm.decrypt(nonce, encrypted_data, None)
+        return cast(bytes, aesgcm.decrypt(nonce, encrypted_data, None))
 
     def compute_hash(self, data: bytes, algorithm: str = "SHA-256") -> str:
         """Compute hash (same as KMS provider)."""

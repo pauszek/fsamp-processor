@@ -11,7 +11,9 @@ FIPS 140-3 Compliance:
 - All files must be encrypted
 """
 
-from datetime import datetime
+from __future__ import annotations
+
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID
@@ -256,7 +258,7 @@ class FileEvent(BaseModel):
         return self.model_copy(
             update={
                 "event_type": event_type,
-                "timestamp": datetime.utcnow(),
+                "timestamp": datetime.now(UTC),
                 "source": EventSource.PROCESSOR,
             }
         )

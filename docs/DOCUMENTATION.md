@@ -20,7 +20,7 @@
 
 ## Introduction
 
-**FSAMP Processor** is an event-driven file processor for the FSAMP (File Secure Access Management Platform). The system handles secure file processing with full **FIPS 140-3** compliance (US Federal cryptographic security standard).
+**FSAMP Processor** is an event-driven file processor for the FSAMP (FedRAMP-compliant Secure AWS Microservices Platform). The system handles secure file processing with full **FIPS 140-3** compliance (US Federal cryptographic security standard).
 
 ### Key Features:
 - 🔒 **FIPS 140-3 Compliance** - AES-256-GCM encryption, keys managed by AWS KMS

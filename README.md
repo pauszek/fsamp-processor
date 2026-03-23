@@ -248,6 +248,27 @@ The Lambda handler uses [AWS Lambda Powertools](https://docs.powertools.aws.dev/
 | `NonRetryableErrors` | Errors that skip message | Count |
 | `BatchSize` | Messages per Lambda invocation | Count |
 
+---
+
+## 🔗 Related Repositories
+
+| Repository | Description |
+|---|---|
+| **fsamp-gateway** | Spring Boot API gateway — file upload, download, auth, resilience |
+| **fsamp-infra** | Terraform IaC, Docker Compose, e2e tests, load tests |
+| **fsamp-event-schema** | Canonical JSON Schema for domain events |
+| **fsamp-code-ci** | Reusable GitHub Actions workflows & composite actions |
+
+### Central Compliance Documentation (fsamp-infra)
+
+| Document | Path |
+|---|---|
+| FedRAMP System Security Plan | `docs/compliance/FEDRAMP_SSP.md` |
+| NIST 800-53 Control Matrix | `docs/compliance/NIST_800_53_CONTROLS.md` |
+| Security Audit Report | `docs/compliance/SECURITY_AUDIT_REPORT.md` |
+| TLS Architecture | `docs/TLS_ARCHITECTURE.md` |
+| Architecture Decision Records | `docs/adr/` |
+
 ## 📄 License
 
 MIT
