@@ -8,7 +8,7 @@ on:
 
 jobs:
   call-python:
-    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@v0.0.34
+    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@v0.0.35
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       GABRBA_SECRET: ${{ secrets.GABRBA_SECRET }}
