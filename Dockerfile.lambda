@@ -62,7 +62,7 @@ LABEL org.opencontainers.image.version="0.1.0"
 LABEL org.opencontainers.image.source="https://github.com/pauszek/fsamp-processor"
 
 # Install OpenSSL tools for fipsinstall (already present in AL2023, ensure module exists)
-RUN dnf install -y openssl openssl-libs && \
+RUN dnf update -y openssl openssl-libs && \
     dnf clean all
 
 # ---------------------------------------------------------------------------
