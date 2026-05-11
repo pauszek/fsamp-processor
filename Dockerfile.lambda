@@ -1,7 +1,8 @@
 # =============================================================================
 # FSAMP Processor - Lambda Container Image
 # =============================================================================
-# Enterprise-grade Lambda container image with FIPS 140-3 OpenSSL provider.
+# Enterprise-grade Lambda container image with a FedRAMP-aligned,
+# FIPS 140-3-oriented OpenSSL runtime posture.
 #
 # Uses the official AWS Lambda base image (AL2023) which includes:
 #   - Lambda Runtime Interface Client (RIC)
@@ -9,7 +10,7 @@
 #   - glibc, OpenSSL 3.x, CA certificates
 #
 # FIPS strategy:
-#   1. OpenSSL FIPS provider activated for all `ssl` / `cryptography` operations
+#   1. AL2023 OpenSSL FIPS provider activated for `ssl` / `cryptography`
 #   2. boto3 FIPS endpoints (`use_fips_endpoint=True`) for AWS API calls
 #   3. KMS CMK for envelope encryption of environment variables
 #
@@ -32,8 +33,22 @@
 # -----------------------------------------------------------------------------
 FROM public.ecr.aws/lambda/python:3.14 AS builder
 
-# Install build dependencies (gcc for C extensions like cryptography)
-RUN dnf install -y gcc python3-devel openssl-devel && \
+# Build cryptography from source against AL2023 system OpenSSL. Prebuilt
+# cryptography wheels bundle their own OpenSSL, which bypasses the runtime
+# FIPS provider configuration.
+ENV OPENSSL_DIR=/usr \
+    OPENSSL_NO_VENDOR=1 \
+    CRYPTOGRAPHY_OPENSSL_NO_VENDOR=1
+
+# Install build dependencies. Rust/C toolchains stay in this throwaway stage.
+RUN dnf install -y \
+        cargo \
+        gcc \
+        libffi-devel \
+        openssl-devel \
+        pkgconf-pkg-config \
+        python3-devel \
+        rust && \
     dnf clean all
 
 # Create virtual env for clean dependency isolation
@@ -42,8 +57,8 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /build
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --no-binary cryptography -r requirements.txt
 
 # Install the application package itself
 COPY pyproject.toml .
@@ -54,45 +69,67 @@ RUN pip install --no-cache-dir .
 # Stage 2: Runtime — minimal Lambda image with FIPS OpenSSL
 # -----------------------------------------------------------------------------
 FROM public.ecr.aws/lambda/python:3.14
+
+ARG OPENSSL_FIPS_PROVIDER=latest
+
 # Labels (OCI standard)
 LABEL maintainer="Pauszek <pauszek@github.io>"
 LABEL org.opencontainers.image.title="FSAMP Processor Lambda"
-LABEL org.opencontainers.image.description="Event-driven file processor with FIPS 140-3 OpenSSL"
+LABEL org.opencontainers.image.description="Event-driven file processor with AL2023 OpenSSL FIPS provider"
 LABEL org.opencontainers.image.version="0.1.0"
 LABEL org.opencontainers.image.source="https://github.com/pauszek/fsamp-processor"
 
-# Install OpenSSL tools for fipsinstall (already present in AL2023, ensure module exists)
-RUN dnf update -y openssl openssl-libs && \
+# Install OpenSSL CLI, the AL2023 FIPS provider, and crypto-policy tooling.
+# AL2023.7+ defaults to openssl-fips-provider-latest for regular security
+# updates. Build with --build-arg OPENSSL_FIPS_PROVIDER=certified when an
+# auditor requires the provider package that matches the NIST certificate
+# checksum instead of the latest patched provider.
+RUN dnf install -y \
+        ca-certificates \
+        crypto-policies-scripts \
+        openssl \
+        openssl-fips-provider-latest && \
+    if [ "${OPENSSL_FIPS_PROVIDER}" = "certified" ]; then \
+        dnf swap -y openssl-fips-provider-latest openssl-fips-provider-certified; \
+    elif [ "${OPENSSL_FIPS_PROVIDER}" != "latest" ]; then \
+        echo "ERROR: OPENSSL_FIPS_PROVIDER must be 'latest' or 'certified'" >&2; \
+        exit 1; \
+    fi && \
+    update-crypto-policies --set FIPS && \
+    dnf remove -y \
+        crypto-policies-scripts \
+        python-unversioned-command \
+        python3 \
+        python3-libs \
+        python3-pip \
+        python3-pip-wheel \
+        python3-setuptools \
+        python3-setuptools-wheel && \
+    test -f /usr/lib64/ossl-modules/fips.so && \
+    test -f /etc/pki/tls/fips_local.cnf && \
+    openssl list -providers -provider-path /usr/lib64/ossl-modules -provider fips \
+        | grep -q "Amazon Linux 2023 - OpenSSL FIPS Provider" && \
     dnf clean all
 
 # ---------------------------------------------------------------------------
 # Configure OpenSSL FIPS provider
 # ---------------------------------------------------------------------------
-# AL2023 ships OpenSSL 3.x with the FIPS provider module pre-built.
-# We activate it so every TLS handshake and hash operation uses the
-# FIPS 140-3 validated code path.
+# Amazon Linux disables `openssl fipsinstall` in its OpenSSL build. For
+# containers, AWS documents enabling FIPS crypto policies inside the container;
+# this config then forces OpenSSL applications in the image to load the AL2023
+# FIPS provider and to prefer FIPS-approved algorithms.
 # ---------------------------------------------------------------------------
-RUN FIPS_MODULE=$(find /usr/lib64 -name 'fips.so' 2>/dev/null | head -1) && \
-    if [ -n "$FIPS_MODULE" ]; then \
-        openssl fipsinstall \
-            -out /etc/pki/tls/fipsmodule.cnf \
-            -module "$FIPS_MODULE"; \
-    else \
-        echo "ERROR: FIPS module not found — refusing to build non-FIPS runtime image" >&2; \
-        exit 1; \
-    fi
-
-# Custom OpenSSL config that activates FIPS + base providers
 COPY <<'FIPSCONF' /etc/pki/tls/openssl-fips.cnf
-# OpenSSL configuration — FIPS 140-3 provider activated
+# OpenSSL configuration - AL2023 FIPS provider activated
 config_diagnostics = 1
 openssl_conf = openssl_init
 
-.include /etc/pki/tls/fipsmodule.cnf
+.include /etc/pki/tls/fips_local.cnf
 
 [openssl_init]
 providers = provider_sect
 alg_section = algorithm_sect
+ssl_conf = ssl_module
 
 [provider_sect]
 fips = fips_sect
@@ -103,14 +140,51 @@ activate = 1
 
 [algorithm_sect]
 default_properties = fips=yes
+
+[ssl_module]
+system_default = crypto_policy
+
+[crypto_policy]
+.include = /etc/crypto-policies/back-ends/opensslcnf.config
 FIPSCONF
 
-# Point OpenSSL at our FIPS config
-ENV OPENSSL_CONF=/etc/pki/tls/openssl-fips.cnf
+# Point OpenSSL at the image-level FIPS config and module path.
+ENV OPENSSL_CONF=/etc/pki/tls/openssl-fips.cnf \
+    OPENSSL_MODULES=/usr/lib64/ossl-modules
+
+# Fail the build if FIPS provider activation regresses. SHA-256 must work;
+# MD5 must be rejected when default_properties=fips=yes is active.
+RUN openssl list -providers -verbose \
+        | grep -q "Amazon Linux 2023 - OpenSSL FIPS Provider" && \
+    openssl dgst -sha256 /etc/os-release >/dev/null && \
+    ! openssl dgst -md5 /etc/os-release >/tmp/openssl-md5.out 2>&1
 
 # Copy the venv from the builder stage
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+
+# Verify cryptography is dynamically linked to AL2023 libcrypto and sees the
+# FIPS default properties at runtime.
+RUN python - <<'PY'
+from pathlib import Path
+import subprocess
+
+from processor.infrastructure.fips import is_fips_enabled
+import cryptography
+
+extension_modules = sorted(Path(cryptography.__file__).resolve().parent.rglob("*.so"))
+if not extension_modules:
+    raise SystemExit("cryptography extension modules were not found")
+
+linked_libraries = "\n".join(
+    subprocess.check_output(["ldd", str(path)], text=True) for path in extension_modules
+)
+if "libcrypto.so.3 => /lib64/libcrypto.so.3" not in linked_libraries:
+    raise SystemExit("cryptography is not dynamically linked to AL2023 libcrypto")
+
+if not is_fips_enabled():
+    raise SystemExit("application FIPS runtime check does not see OpenSSL FIPS mode")
+PY
 
 # Copy application source code into Lambda task root
 COPY src/processor ${LAMBDA_TASK_ROOT}/processor
@@ -123,6 +197,8 @@ ENV POWERTOOLS_SERVICE_NAME=fsamp-processor \
     POWERTOOLS_LOG_LEVEL=INFO \
     LOG_FORMAT=json \
     ENVIRONMENT=prod \
+    FIPS_REQUIRED=true \
+    USE_FIPS_ENDPOINT=true \
     PYTHONUNBUFFERED=1
 
 # Lambda handler — module path relative to LAMBDA_TASK_ROOT
