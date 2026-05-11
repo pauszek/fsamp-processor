@@ -1,7 +1,7 @@
 # =============================================================================
-# Unit Tests for Domain Events (Schema v1.0.0)
+# Unit Tests for Domain Events (Schema v1.1.0)
 # =============================================================================
-"""Tests for Pydantic event models following schema v1.0.0."""
+"""Tests for Pydantic event models following schema v1.1.0."""
 
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -21,7 +21,7 @@ from processor.domain.events import (
 )
 
 # ============================================================================
-# Test Fixtures - Schema v1.0.0 compliant
+# Test Fixtures - Schema v1.1.0 compliant
 # ============================================================================
 
 SAMPLE_CHECKSUM = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -52,9 +52,10 @@ def create_valid_security_context(**overrides) -> SecurityContext:
 
 
 def create_valid_event_data() -> dict:
-    """Create valid event data dict matching schema v1.0.0."""
+    """Create valid event data dict matching schema v1.1.0."""
     return {
         "schemaVersion": SCHEMA_VERSION,
+        "fileId": str(uuid4()),
         "eventId": str(uuid4()),
         "correlationId": str(uuid4()),
         "timestamp": datetime.now(UTC).isoformat(),
@@ -79,7 +80,7 @@ def create_valid_event_data() -> dict:
 
 
 class TestFileMetadata:
-    """Tests for FileMetadata model v1.0.0."""
+    """Tests for FileMetadata model v1.1.0."""
 
     def test_valid_metadata(self) -> None:
         """Test creating valid file metadata."""
@@ -172,7 +173,7 @@ class TestStorageLocation:
 
 
 class TestSecurityContext:
-    """Tests for SecurityContext model v1.0.0 - FIPS 140-3 compliant."""
+    """Tests for SecurityContext model v1.1.0 - FIPS 140-3-oriented."""
 
     def test_full_context(self) -> None:
         """Test fully populated security context."""
@@ -221,7 +222,7 @@ class TestSecurityContext:
 
 
 class TestFileEvent:
-    """Tests for FileEvent model v1.0.0."""
+    """Tests for FileEvent model v1.1.0."""
 
     def test_valid_event(self) -> None:
         """Test creating valid file event."""
@@ -279,6 +280,7 @@ class TestFileEvent:
         json_dict = event.model_dump(mode="json", by_alias=True)
 
         assert "schemaVersion" in json_dict
+        assert "fileId" in json_dict
         assert "eventId" in json_dict
         assert "correlationId" in json_dict
         assert "source" in json_dict
@@ -286,7 +288,7 @@ class TestFileEvent:
         assert "checksumSHA256" in json_dict["fileMetadata"]
 
     def test_correlation_id_must_be_uuid(self) -> None:
-        """Test that correlationId must be UUID (v1.0.0 requirement)."""
+        """Test that correlationId must be UUID (v1.1.0 requirement)."""
         event_data = create_valid_event_data()
         event_data["correlationId"] = "not-a-uuid"
 
@@ -304,7 +306,7 @@ class TestFileEvent:
 
 
 class TestSQSMessageWrapper:
-    """Tests for SQS message wrapper v1.0.0."""
+    """Tests for SQS message wrapper v1.1.0."""
 
     def test_direct_event_extraction(self) -> None:
         """Test extracting FileEvent from direct message body."""

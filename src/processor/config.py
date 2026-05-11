@@ -66,11 +66,17 @@ class Settings(BaseSettings):
     )
 
     # -------------------------------------------------------------------------
-    # FIPS 140-3 Compliance
+    # FIPS 140-3-oriented security posture
     # -------------------------------------------------------------------------
     use_fips_endpoint: bool = Field(
         default=True,
         description="Use FIPS 140-3 validated AWS endpoints (requires us-* region)",
+    )
+
+    fips_required: bool | None = Field(
+        default=None,
+        description="Require FIPS mode for crypto/TLS (defaults to non-local only)",
+        alias="FIPS_REQUIRED",
     )
 
     # -------------------------------------------------------------------------
@@ -191,6 +197,17 @@ class Settings(BaseSettings):
         if self.is_local or self.aws_endpoint_url:
             return False
         return self.use_fips_endpoint and self.aws_region.startswith("us-")
+
+    @property
+    def should_require_fips(self) -> bool:
+        """
+        Check if FIPS mode must be enforced for crypto/TLS.
+
+        Defaults to true for non-local environments unless overridden.
+        """
+        if self.fips_required is not None:
+            return self.fips_required
+        return not self.is_local and not self.aws_endpoint_url
 
     @property
     def use_json_logging(self) -> bool:

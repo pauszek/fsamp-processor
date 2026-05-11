@@ -1,9 +1,9 @@
 # =============================================================================
-# KMS Crypto Provider Adapter - FIPS 140-3 Compliant
+# KMS Crypto Provider Adapter - FIPS 140-3-Oriented
 # =============================================================================
 """
 KMS implementation of the CryptoProvider port.
-Provides FIPS 140-3 compliant cryptographic operations using AWS KMS
+Provides FIPS 140-3-oriented cryptographic operations using AWS KMS
 and the Python cryptography library.
 """
 
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# FIPS 140-3 compliant constants
+# FIPS 140-3-oriented constants
 AES_KEY_SIZE = 256  # bits
 GCM_NONCE_SIZE = 12  # bytes (96 bits as per NIST SP 800-38D)
 GCM_TAG_SIZE = 16  # bytes (128 bits)
@@ -37,18 +37,18 @@ GCM_TAG_SIZE = 16  # bytes (128 bits)
 
 class KMSCryptoProvider(CryptoProvider):
     """
-    AWS KMS Crypto Provider with FIPS 140-3 compliance.
+    AWS KMS Crypto Provider with a FIPS 140-3-oriented posture.
 
     Implements envelope encryption:
     1. KMS generates/encrypts data encryption keys (DEKs)
     2. Data is encrypted locally using AES-256-GCM
     3. Encrypted DEK is stored alongside ciphertext
 
-    FIPS 140-3 Compliance:
+    FIPS 140-3-oriented posture:
     - Uses AWS KMS (FIPS 140-2 Level 3 validated)
     - AES-256-GCM for symmetric encryption
     - SHA-256/384/512 for hashing
-    - No deprecated algorithms (MD5, SHA-1, DES, etc.)
+    - No disallowed legacy algorithms (MD5, SHA-1, DES, etc.)
     """
 
     def __init__(
@@ -68,7 +68,7 @@ class KMSCryptoProvider(CryptoProvider):
         self._backend = default_backend()
 
         logger.info(
-            "KMS Crypto Provider initialized (FIPS 140-3 compliant)",
+            "KMS Crypto Provider initialized (FIPS 140-3-oriented)",
             key_id=self._mask_key_id(key_id),
         )
 
@@ -304,7 +304,7 @@ class KMSCryptoProvider(CryptoProvider):
         if algorithm_upper not in hash_functions:
             raise CryptoError(
                 message=f"Unsupported hash algorithm: {algorithm}. "
-                f"FIPS 140-3 compliant options: SHA-256, SHA-384, SHA-512",
+                f"FIPS 140-3-oriented options: SHA-256, SHA-384, SHA-512",
                 operation="hash",
                 algorithm=algorithm,
             )
@@ -364,7 +364,7 @@ class LocalCryptoProvider(CryptoProvider):
     """
     Local crypto provider for testing without AWS KMS.
 
-    WARNING: This is NOT FIPS 140-3 compliant and should only be used
+    WARNING: This is not part of the FIPS 140-3-oriented runtime and should only be used
     for local development and testing with LocalStack.
     """
 

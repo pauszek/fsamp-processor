@@ -4,8 +4,8 @@
 [![AWS Lambda](https://img.shields.io/badge/AWS-Lambda-FF9900?logo=awslambda)](https://aws.amazon.com/lambda/)
 [![FIPS 140-3](https://img.shields.io/badge/FIPS-140--3-green)](https://csrc.nist.gov/publications/detail/fips/140/3/final)
 
-> Event-driven file processor for FSAMP platform with FIPS 140-3 compliance.
-> Deployable as **AWS Lambda** (primary) or **ECS Fargate** container.
+> Event-driven file processor for FSAMP platform with a FIPS 140-3-oriented security posture.
+> Core runtime: **AWS Lambda** with SQS trigger. ECS Fargate remains an optional demonstration profile.
 
 ## 🏗️ Architecture
 
@@ -15,7 +15,7 @@
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │   ┌────────────────────────────────────────────────────────────────────┐    │
-│   │  PRIMARY: AWS Lambda                                                │    │
+│   │  PRODUCTION: AWS Lambda                                             │    │
 │   │  ┌──────────┐     ┌────────────────┐     ┌──────────────────┐     │    │
 │   │  │   SQS    │────▶│ Lambda Handler │────▶│ FileProcessor    │     │    │
 │   │  │  Queue   │     │ (Powertools)   │     │ Service          │     │    │
@@ -26,7 +26,7 @@
 │   └────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
 │   ┌────────────────────────────────────────────────────────────────────┐    │
-│   │  ALTERNATIVE: ECS Fargate (for large files > 10GB)                 │    │
+│   │  PRODUCTION: ECS Fargate (long-running / large files)              │    │
 │   │  ┌──────────┐     ┌────────────────┐     ┌──────────────────┐     │    │
 │   │  │   SQS    │────▶│ SQS Consumer   │────▶│ FileProcessor    │     │    │
 │   │  │  Queue   │     │ (Long-poll)    │     │ Service          │     │    │
@@ -182,13 +182,22 @@ docker build -t fsamp-processor:latest .
 docker-compose up
 ```
 
-## 🔒 FIPS 140-3 Compliance
+## 🔒 FIPS 140-3-Oriented Security
 
-This processor implements FIPS 140-3 compliant cryptography:
+This processor is designed for a FIPS 140-3-oriented runtime:
 
 - **Encryption**: AES-256-GCM via AWS KMS
 - **Key Management**: AWS KMS with automatic key rotation
 - **Library**: Python `cryptography` package (OpenSSL FIPS provider)
+- **Enforcement**: FIPS mode is required in non-local environments (override via `FIPS_REQUIRED=false` if needed)
+
+## ✅ Enterprise Controls (FedRAMP-aligned)
+
+- **FedRAMP Moderate aligned** baseline (not FedRAMP authorized) with NIST SP 800-53 Rev. 5 mappings at the platform level.
+- **FIPS 140-3-oriented crypto** with OpenSSL FIPS provider + AWS KMS; optional AWS FIPS endpoints via `USE_FIPS_ENDPOINT` in US regions.
+- **Audit & monitoring** using structured JSON logs and CloudWatch logs/metrics for both Lambda and ECS modes.
+- **Resilience** with SQS DLQ handling and at-least-once delivery semantics.
+- **Least-privilege IAM** roles for SQS/SNS/S3/DynamoDB/KMS access.
 
 ## ⚙️ Configuration
 
@@ -199,6 +208,8 @@ Environment variables:
 | `ENVIRONMENT` | Deployment environment | `local` | ✅ | ✅ |
 | `AWS_REGION` | AWS region | `us-west-2` | ✅ | ✅ |
 | `AWS_ENDPOINT_URL` | LocalStack endpoint | `None` | ✅ | ✅ |
+| `USE_FIPS_ENDPOINT` | Use AWS FIPS endpoints (us-*) | `true` | ✅ | ✅ |
+| `FIPS_REQUIRED` | Enforce OpenSSL FIPS mode | `true` (non-local) | ✅ | ✅ |
 | `SQS_QUEUE_URL` | Processing queue URL | Required | ❌ | ✅ |
 | `SNS_TOPIC_ARN` | Event topic ARN | Required | ✅ | ✅ |
 | `S3_BUCKET_NAME` | File storage bucket | Required | ✅ | ✅ |
@@ -263,7 +274,7 @@ The Lambda handler uses [AWS Lambda Powertools](https://docs.powertools.aws.dev/
 
 | Document | Path |
 |---|---|
-| FedRAMP System Security Plan | `docs/compliance/FEDRAMP_SSP.md` |
+| FedRAMP-aligned SSP | `docs/compliance/FEDRAMP_SSP.md` |
 | NIST 800-53 Control Matrix | `docs/compliance/NIST_800_53_CONTROLS.md` |
 | Security Audit Report | `docs/compliance/SECURITY_AUDIT_REPORT.md` |
 | TLS Architecture | `docs/TLS_ARCHITECTURE.md` |

@@ -323,6 +323,7 @@ def create_test_event() -> FileEvent:
     """Create a test FileEvent."""
     return FileEvent(
         schema_version=SCHEMA_VERSION,
+        file_id=uuid.uuid4(),
         event_id=uuid.uuid4(),
         correlation_id=uuid.uuid4(),
         timestamp=datetime.now(UTC),

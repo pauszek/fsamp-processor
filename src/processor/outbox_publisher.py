@@ -30,7 +30,6 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, cast
 
-import boto3
 from aws_lambda_powertools import Logger, Metrics, Tracer
 
 if TYPE_CHECKING:
@@ -47,7 +46,9 @@ from aws_lambda_powertools.utilities.data_classes.dynamo_db_stream_event import 
 )
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
+from processor.config import Settings, get_settings
 from processor.domain.models import OutboxEvent, OutboxStatus
+from processor.infrastructure import AWSClientFactory, enforce_fips
 
 # =============================================================================
 # AWS Lambda Powertools Configuration
@@ -62,8 +63,6 @@ processor = BatchProcessor(event_type=EventType.DynamoDBStreams)
 # Environment Configuration
 # =============================================================================
 
-SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN", "")
-OUTBOX_TABLE_NAME = os.environ.get("OUTBOX_TABLE_NAME", "")
 MAX_RETRY_COUNT = int(os.environ.get("MAX_RETRY_COUNT", "3"))
 
 # =============================================================================
@@ -72,13 +71,45 @@ MAX_RETRY_COUNT = int(os.environ.get("MAX_RETRY_COUNT", "3"))
 
 _sns_client: SNSClient | None = None
 _dynamodb_client: DynamoDBClient | None = None
+_aws_factory: AWSClientFactory | None = None
+_settings: Settings | None = None
+
+
+def get_aws_factory() -> AWSClientFactory:
+    """Get AWS client factory (singleton for Lambda warm starts)."""
+    global _aws_factory, _settings
+
+    if _aws_factory is None:
+        _settings = get_settings()
+        enforce_fips(_settings.should_require_fips)
+        _aws_factory = AWSClientFactory(
+            region=_settings.aws_region,
+            endpoint_url=_settings.aws_endpoint_url,
+            use_fips=_settings.should_use_fips,
+        )
+
+    return _aws_factory
+
+
+def get_sns_topic_arn() -> str:
+    """Resolve SNS topic ARN from settings or environment."""
+    if _settings and _settings.sns_topic_arn:
+        return _settings.sns_topic_arn
+    return os.environ.get("SNS_TOPIC_ARN", "")
+
+
+def get_outbox_table_name() -> str:
+    """Resolve outbox table name from settings or environment."""
+    if _settings and _settings.outbox_table_name:
+        return _settings.outbox_table_name
+    return os.environ.get("OUTBOX_TABLE_NAME", "")
 
 
 def get_sns_client() -> SNSClient:
     """Get SNS client (singleton for Lambda warm starts)."""
     global _sns_client
     if _sns_client is None:
-        _sns_client = boto3.client("sns")
+        _sns_client = get_aws_factory().get_sns_client()
     return _sns_client
 
 
@@ -86,7 +117,7 @@ def get_dynamodb_client() -> DynamoDBClient:
     """Get DynamoDB client (singleton for Lambda warm starts)."""
     global _dynamodb_client
     if _dynamodb_client is None:
-        _dynamodb_client = boto3.client("dynamodb")
+        _dynamodb_client = get_aws_factory().get_dynamodb_client()
     return _dynamodb_client
 
 
@@ -176,7 +207,8 @@ def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
         try:
             dynamo_event_id = new_image.get("eventId")
             if dynamo_event_id:
-                mark_event_failed(dynamo_event_id, str(e))
+                aggregate_type = new_image.get("aggregateType") or "FileProcessing"
+                mark_event_failed(dynamo_event_id, str(e), aggregate_type=aggregate_type)
         except Exception:
             logger.exception(
                 "Failed to mark event as failed", event_name=event_name, event_id=event_id
@@ -205,11 +237,27 @@ def publish_to_sns(outbox_event: OutboxEvent) -> str:
     """
     sns = get_sns_client()
 
-    message = json.dumps(outbox_event.to_sns_message())
+    message_payload = (
+        outbox_event.payload
+        if "schemaVersion" in outbox_event.payload and "eventType" in outbox_event.payload
+        else outbox_event.to_sns_message()
+    )
+    message = json.dumps(message_payload)
     attributes = outbox_event.to_sns_attributes()
+    if "fileId" in outbox_event.payload:
+        attributes["fileId"] = {
+            "DataType": "String",
+            "StringValue": str(outbox_event.payload["fileId"]),
+        }
+    if "correlationId" in outbox_event.payload:
+        attributes["correlationId"] = {
+            "DataType": "String",
+            "StringValue": str(outbox_event.payload["correlationId"]),
+        }
 
+    topic_arn = get_sns_topic_arn()
     response = sns.publish(
-        TopicArn=SNS_TOPIC_ARN,
+        TopicArn=topic_arn,
         Message=message,
         MessageAttributes=attributes,
         # Use message group ID for FIFO topics (if applicable)
@@ -232,7 +280,7 @@ def mark_event_published(outbox_event: OutboxEvent) -> None:
     ttl = int((datetime.now(UTC) + timedelta(hours=24)).timestamp())
 
     dynamodb.update_item(
-        TableName=OUTBOX_TABLE_NAME,
+        TableName=get_outbox_table_name(),
         Key={
             "PK": {"S": f"OUTBOX#{outbox_event.aggregate_type}"},
             "SK": {"S": f"EVENT#{outbox_event.event_id}"},
@@ -261,7 +309,7 @@ def mark_event_failed(event_id: str, error: str, aggregate_type: str = "FileProc
     dynamodb = get_dynamodb_client()
 
     dynamodb.update_item(
-        TableName=OUTBOX_TABLE_NAME,
+        TableName=get_outbox_table_name(),
         Key={
             "PK": {"S": f"OUTBOX#{aggregate_type}"},
             "SK": {"S": f"EVENT#{event_id}"},
@@ -291,7 +339,7 @@ def mark_event_failed(event_id: str, error: str, aggregate_type: str = "FileProc
 # =============================================================================
 
 
-@logger.inject_lambda_context(log_event=True)
+@logger.inject_lambda_context(log_event=False)
 @tracer.capture_lambda_handler
 @metrics.log_metrics(capture_cold_start_metric=True)
 def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
@@ -314,9 +362,9 @@ def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, A
     )
 
     # Validate configuration
-    if not SNS_TOPIC_ARN:
+    if not get_sns_topic_arn():
         raise ValueError("SNS_TOPIC_ARN environment variable not set")
-    if not OUTBOX_TABLE_NAME:
+    if not get_outbox_table_name():
         raise ValueError("OUTBOX_TABLE_NAME environment variable not set")
 
     # Process batch with partial failure support
@@ -359,7 +407,7 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
 
     # Query failed events
     response = dynamodb.query(
-        TableName=OUTBOX_TABLE_NAME,
+        TableName=get_outbox_table_name(),
         IndexName="GSI1",
         KeyConditionExpression="GSI1PK = :status",
         FilterExpression="retryCount < :max_retries",
@@ -382,7 +430,7 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
 
             # Reset status to PENDING for retry
             dynamodb.update_item(
-                TableName=OUTBOX_TABLE_NAME,
+                TableName=get_outbox_table_name(),
                 Key={
                     "PK": {"S": f"OUTBOX#{outbox_event.aggregate_type}"},
                     "SK": {"S": f"EVENT#{outbox_event.event_id}"},

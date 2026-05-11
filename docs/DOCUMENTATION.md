@@ -20,11 +20,11 @@
 
 ## Introduction
 
-**FSAMP Processor** is an event-driven file processor for the FSAMP (FedRAMP-compliant Secure AWS Microservices Platform). The system handles secure file processing with full **FIPS 140-3** compliance (US Federal cryptographic security standard).
+**FSAMP Processor** is an event-driven file processor for the FSAMP (FedRAMP Moderate-aligned Secure AWS Microservices Platform). The system uses a **FIPS 140-3-oriented** cryptographic posture: validated AWS services/endpoints in non-local environments, strict algorithm allow-lists, and fail-closed runtime checks where supported.
 
 ### Key Features:
-- 🔒 **FIPS 140-3 Compliance** - AES-256-GCM encryption, keys managed by AWS KMS
-- ⚡ **Dual Deployment Modes** - AWS Lambda (primary) or ECS Fargate (for large files >10GB)
+- 🔒 **FIPS 140-3-oriented security** - AES-256-GCM encryption, keys managed by AWS KMS, FIPS endpoints outside LocalStack
+- ⚡ **Dual Production Modes** - AWS Lambda and ECS Fargate (long-running / large files)
 - 📦 **Hexagonal Architecture** - Clean ports and adapters pattern
 - 🔄 **Outbox Pattern** - Guaranteed event delivery
 - 📊 **Observability** - AWS Lambda Powertools, X-Ray tracing, CloudWatch metrics
@@ -131,7 +131,7 @@ fsamp-processor/
 │
 ├── docs/                              # 📖 DOCUMENTATION
 ├── schema/                            # 📋 JSON SCHEMAS
-│   └── event.schema.json              # FSAMP events schema v1.0.0
+│   └── event.schema.json              # FSAMP events schema v1.1.0
 ├── events/                            # 📧 SAMPLE EVENTS
 │   ├── sample-sqs-event.json
 │   └── sample-sns-wrapped-event.json
@@ -153,9 +153,10 @@ A `FILE_UPLOADED` event arrives via SQS Queue (Lambda trigger or ECS long-pollin
 
 ```json
 {
-  "schemaVersion": "1.0.0",
-  "eventId": "123e4567-e89b-12d3-a456-426614174000",
-  "correlationId": "abc12345-e89b-12d3-a456-426614174000",
+  "schemaVersion": "1.1.0",
+  "fileId": "550e8400-e29b-41d4-a716-446655440000",
+  "eventId": "123e4567-e89b-42d3-a456-426614174000",
+  "correlationId": "abc12345-e89b-42d3-a456-426614174000",
   "timestamp": "2024-01-05T10:30:00Z",
   "source": "fsamp-gateway",
   "eventType": "FILE_UPLOADED",
@@ -167,7 +168,7 @@ A `FILE_UPLOADED` event arrives via SQS Queue (Lambda trigger or ECS long-pollin
   },
   "storageLocation": {
     "bucketName": "fsamp-files-dev",
-    "objectKey": "uploads/2024/01/05/123e4567.pdf"
+    "objectKey": "uploads/2024/01/05/550e8400-e29b-41d4-a716-446655440000/document.pdf"
   },
   "encryptionDetails": {
     "algorithm": "AES_256_GCM",
@@ -333,7 +334,7 @@ class OutboxEvent:
 
 ## Deployment Modes
 
-### 1. AWS Lambda (Recommended)
+### 1. AWS Lambda (Production)
 
 ```bash
 # Build with SAM
@@ -355,9 +356,9 @@ sam local invoke ProcessorFunction -e events/sample-sqs-event.json --env-vars en
 **Limitations:**
 - Max 15 min timeout
 - Max 10GB memory
-- Not suitable for very large files
+- Use ECS for very large files or long-running workloads
 
-### 2. ECS Fargate (For Large Files)
+### 2. ECS Fargate (Production, Long-running)
 
 ```bash
 # Run locally
@@ -370,7 +371,7 @@ docker-compose up
 **Advantages:**
 - Unlimited timeout
 - Full resource control
-- For files > 10GB
+- Handles long-running workloads and very large files
 
 ---
 
@@ -667,7 +668,7 @@ def file_processor_service(mock_file_storage, mock_metadata_repo, ...):
 FSAMP Processor is a production-ready, event-driven file processing system:
 
 - **Architecture**: Hexagonal (Ports & Adapters) with clean layer separation
-- **Runtime**: AWS Lambda (primary) + ECS Fargate (backup for large files)
+- **Runtime**: AWS Lambda + ECS Fargate (both production)
 - **Security**: FIPS 140-3 with KMS + AES-256-GCM
 - **Reliability**: Outbox Pattern for at-least-once delivery
 - **Observability**: Lambda Powertools + CloudWatch + X-Ray

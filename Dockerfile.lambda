@@ -78,7 +78,8 @@ RUN FIPS_MODULE=$(find /usr/lib64 -name 'fips.so' 2>/dev/null | head -1) && \
             -out /etc/pki/tls/fipsmodule.cnf \
             -module "$FIPS_MODULE"; \
     else \
-        echo "WARNING: FIPS module not found — running without FIPS provider" >&2; \
+        echo "ERROR: FIPS module not found — refusing to build non-FIPS runtime image" >&2; \
+        exit 1; \
     fi
 
 # Custom OpenSSL config that activates FIPS + base providers

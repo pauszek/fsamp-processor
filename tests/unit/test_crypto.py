@@ -1,7 +1,7 @@
 # =============================================================================
 # Unit Tests for Crypto Provider
 # =============================================================================
-"""Tests for FIPS 140-3 compliant crypto operations."""
+"""Tests for FIPS 140-3-oriented crypto operations."""
 
 import pytest
 
@@ -19,7 +19,7 @@ class TestLocalCryptoProvider:
 
     def test_encrypt_decrypt_roundtrip(self, crypto: LocalCryptoProvider) -> None:
         """Test that encrypt then decrypt returns original data."""
-        plaintext = b"Hello, FIPS 140-3 compliant encryption!"
+        plaintext = b"Hello, FIPS 140-3-oriented encryption!"
 
         ciphertext = crypto.encrypt(plaintext)
         decrypted = crypto.decrypt(ciphertext)
@@ -118,7 +118,7 @@ class TestHashFunctions:
         assert "Unsupported" in str(exc_info.value)
 
     def test_sha1_rejected(self, crypto: LocalCryptoProvider) -> None:
-        """Test that SHA-1 (deprecated) is rejected."""
+        """Test that SHA-1 is rejected."""
         with pytest.raises(CryptoError) as exc_info:
             crypto.compute_hash(b"data", "SHA-1")
 

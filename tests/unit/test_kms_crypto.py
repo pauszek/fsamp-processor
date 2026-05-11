@@ -1,7 +1,7 @@
 # =============================================================================
 # Unit Tests for KMS Crypto Provider (Extended)
 # =============================================================================
-"""Extended tests for FIPS 140-3 compliant KMS crypto operations."""
+"""Extended tests for FIPS 140-3-oriented KMS crypto operations."""
 
 from unittest.mock import MagicMock
 

@@ -19,6 +19,12 @@ class TestOutboxPublisherHelpers:
         """Set up environment variables."""
         os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
         os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
+        from processor import outbox_publisher
+
+        outbox_publisher._sns_client = None
+        outbox_publisher._dynamodb_client = None
+        outbox_publisher._aws_factory = None
+        outbox_publisher._settings = None
         yield
         os.environ.pop("SNS_TOPIC_ARN", None)
         os.environ.pop("OUTBOX_TABLE_NAME", None)
@@ -27,41 +33,31 @@ class TestOutboxPublisherHelpers:
         """Test that SNS client is reused."""
         from processor import outbox_publisher
 
-        # Reset singleton
-        outbox_publisher._sns_client = None
+        mock_client = MagicMock()
+        mock_factory = MagicMock()
+        mock_factory.get_sns_client.return_value = mock_client
 
-        with patch("processor.outbox_publisher.boto3") as mock_boto:
-            mock_client = MagicMock()
-            mock_boto.client.return_value = mock_client
-
+        with patch.object(outbox_publisher, "get_aws_factory", return_value=mock_factory):
             client1 = outbox_publisher.get_sns_client()
             client2 = outbox_publisher.get_sns_client()
 
-            assert client1 is client2
-            mock_boto.client.assert_called_once_with("sns")
-
-        # Reset for other tests
-        outbox_publisher._sns_client = None
+        assert client1 is client2
+        mock_factory.get_sns_client.assert_called_once()
 
     def test_get_dynamodb_client_singleton(self) -> None:
         """Test that DynamoDB client is reused."""
         from processor import outbox_publisher
 
-        # Reset singleton
-        outbox_publisher._dynamodb_client = None
+        mock_client = MagicMock()
+        mock_factory = MagicMock()
+        mock_factory.get_dynamodb_client.return_value = mock_client
 
-        with patch("processor.outbox_publisher.boto3") as mock_boto:
-            mock_client = MagicMock()
-            mock_boto.client.return_value = mock_client
-
+        with patch.object(outbox_publisher, "get_aws_factory", return_value=mock_factory):
             client1 = outbox_publisher.get_dynamodb_client()
             client2 = outbox_publisher.get_dynamodb_client()
 
-            assert client1 is client2
-            mock_boto.client.assert_called_once_with("dynamodb")
-
-        # Reset for other tests
-        outbox_publisher._dynamodb_client = None
+        assert client1 is client2
+        mock_factory.get_dynamodb_client.assert_called_once()
 
 
 class TestOutboxPublisherRecordHandlerLogic:
@@ -214,10 +210,11 @@ class TestOutboxPublisherLambdaHandler:
         from processor import outbox_publisher
 
         # Test SNS_TOPIC_ARN is used
-        assert os.environ.get("SNS_TOPIC_ARN", "") == outbox_publisher.SNS_TOPIC_ARN
+        outbox_publisher._settings = None
+        assert os.environ.get("SNS_TOPIC_ARN", "") == outbox_publisher.get_sns_topic_arn()
 
         # Test OUTBOX_TABLE_NAME is used
-        assert os.environ.get("OUTBOX_TABLE_NAME", "") == outbox_publisher.OUTBOX_TABLE_NAME
+        assert os.environ.get("OUTBOX_TABLE_NAME", "") == outbox_publisher.get_outbox_table_name()
 
     def test_lambda_handler_constants(self) -> None:
         """Test lambda handler constants are set."""

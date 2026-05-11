@@ -126,6 +126,7 @@ class TestFileProcessorServiceHandle:
         # Create event with large file size
         large_file_event = FileEvent(
             schema_version=sample_file_event.schema_version,
+            file_id=sample_file_event.file_id,
             event_id=sample_file_event.event_id,
             correlation_id=sample_file_event.correlation_id,
             timestamp=sample_file_event.timestamp,
@@ -187,6 +188,7 @@ class TestFileProcessorServiceHandle:
         # Create event with FILE_SCANNED type
         scanned_event = FileEvent(
             schema_version=sample_file_event.schema_version,
+            file_id=sample_file_event.file_id,
             event_id=sample_file_event.event_id,
             correlation_id=sample_file_event.correlation_id,
             timestamp=sample_file_event.timestamp,
@@ -209,6 +211,7 @@ class TestFileProcessorServiceHandle:
         # Create event with ANALYSIS_COMPLETED type
         analysis_event = FileEvent(
             schema_version=sample_file_event.schema_version,
+            file_id=sample_file_event.file_id,
             event_id=sample_file_event.event_id,
             correlation_id=sample_file_event.correlation_id,
             timestamp=sample_file_event.timestamp,
@@ -382,7 +385,7 @@ class TestFileProcessorServiceCreateMetadataRecord:
 
         record = service._create_metadata_record(sample_file_event, timestamp)
 
-        assert record.file_id == str(sample_file_event.event_id)
+        assert record.file_id == sample_file_event.file_id_str
         # correlation_id can be UUID or str depending on MetadataRecord implementation
         assert str(record.correlation_id) == str(sample_file_event.correlation_id)
         assert record.original_filename == sample_file_event.file_metadata.original_filename

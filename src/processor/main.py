@@ -19,7 +19,7 @@ from processor.adapters.outbound import (
 )
 from processor.application import FileProcessorService
 from processor.config import Settings, get_settings
-from processor.infrastructure import AWSClientFactory, configure_logging
+from processor.infrastructure import AWSClientFactory, configure_logging, enforce_fips
 
 logger = structlog.get_logger(__name__)
 
@@ -43,6 +43,7 @@ def create_application(settings: Settings) -> SQSConsumer:
     aws_factory = AWSClientFactory(
         region=settings.aws_region,
         endpoint_url=settings.aws_endpoint_url,
+        use_fips=settings.should_use_fips,
     )
 
     # Verify AWS connectivity
@@ -124,6 +125,9 @@ def main() -> int:
             region=settings.aws_region,
             is_local=settings.is_local,
         )
+
+        # Enforce FIPS mode when required
+        enforce_fips(settings.should_require_fips)
 
         # Create application
         consumer = create_application(settings)

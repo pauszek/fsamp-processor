@@ -11,6 +11,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: production
+      args:
+        REQUIRE_FIPS_PROVIDER: "false"
     container_name: fsamp-processor-standalone
     restart: unless-stopped
     depends_on:
@@ -24,10 +26,13 @@ services:
       - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-processing-queue
+      - USE_FIPS_ENDPOINT=false
+      - FIPS_REQUIRED=false
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-file-processing
       - SNS_TOPIC_ARN=arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
       - S3_BUCKET_NAME=fsamp-local-files
-      - DYNAMODB_TABLE_NAME=fsamp-local-metadata
+      - DYNAMODB_TABLE_NAME=fsamp-local-file-metadata
+      - OUTBOX_TABLE_NAME=fsamp-local-outbox
       - KMS_KEY_ID=alias/fsamp-local-master-key
     networks:
       - processor-network
@@ -42,6 +47,8 @@ services:
       - AWS_DEFAULT_REGION=us-west-2
       - SERVICES=s3,sqs,sns,dynamodb,kms,iam,sts
       - EAGER_SERVICE_LOADING=1
+      - ENFORCE_IAM=1
+      - IAM_SOFT_MODE=1
       - PERSISTENCE=0
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

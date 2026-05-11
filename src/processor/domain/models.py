@@ -37,6 +37,7 @@ class OutboxStatus(StrEnum):
 class OutboxEventType(StrEnum):
     """Types of events in the outbox."""
 
+    FILE_UPLOADED = "FILE_UPLOADED"
     FILE_PROCESSED = "FILE_PROCESSED"
     FILE_FAILED = "FILE_FAILED"
     FILE_SCAN_COMPLETED = "FILE_SCAN_COMPLETED"

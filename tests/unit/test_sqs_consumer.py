@@ -345,7 +345,8 @@ class TestSQSConsumerProcessMessage:
 
         # Create valid file event
         file_event = {
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
+            "file_id": str(uuid4()),
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),
             "timestamp": datetime.now(UTC).isoformat(),
@@ -429,7 +430,8 @@ class TestSQSConsumerProcessMessage:
         )
 
         file_event = {
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
+            "file_id": str(uuid4()),
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),
             "timestamp": datetime.now(UTC).isoformat(),
@@ -483,7 +485,8 @@ class TestSQSConsumerProcessMessage:
         )
 
         file_event = {
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
+            "file_id": str(uuid4()),
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),
             "timestamp": datetime.now(UTC).isoformat(),

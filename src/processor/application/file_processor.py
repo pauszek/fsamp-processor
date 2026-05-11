@@ -107,6 +107,7 @@ class FileProcessorService:
         """
         log = logger.bind(
             event_id=event.event_id_str,
+            file_id=event.file_id_str,
             correlation_id=event.correlation_id_str,
             event_type=event.event_type.value,
             filename=event.file_metadata.original_filename,
@@ -200,7 +201,7 @@ class FileProcessorService:
             encrypted=file_content.is_encrypted,
         )
 
-        # Compute file hash (FIPS 140-3 compliant)
+        # Compute file hash using SHA-256 (FIPS 180-4).
         file_hash = self._crypto.compute_hash(file_content.data, "SHA-256")
         log.debug("File hash computed", hash=file_hash[:16] + "...")
 
@@ -217,7 +218,7 @@ class FileProcessorService:
         # Create outbox event for completion
         if analysis_result.is_safe:
             outbox_event = OutboxEvent.for_file_processed(
-                file_id=str(event.event_id),
+                file_id=event.file_id_str,
                 correlation_id=str(event.correlation_id),
                 file_hash=file_hash,
                 is_safe=True,
@@ -226,7 +227,7 @@ class FileProcessorService:
             )
         else:
             outbox_event = OutboxEvent.for_file_quarantined(
-                file_id=str(event.event_id),
+                file_id=event.file_id_str,
                 correlation_id=str(event.correlation_id),
                 reason="File failed security analysis",
                 findings=analysis_result.findings,
@@ -335,7 +336,7 @@ class FileProcessorService:
     ) -> MetadataRecord:
         """Create a metadata record from an event."""
         return MetadataRecord(
-            file_id=str(event.event_id),
+            file_id=event.file_id_str,
             timestamp=timestamp,
             correlation_id=str(event.correlation_id),
             original_filename=event.file_metadata.original_filename,
@@ -365,7 +366,7 @@ class FileProcessorService:
 
             # Create outbox event for failure
             outbox_event = OutboxEvent.for_file_failed(
-                file_id=str(event.event_id),
+                file_id=event.file_id_str,
                 correlation_id=str(event.correlation_id),
                 error_code=error_code,
                 error_message=error_message,

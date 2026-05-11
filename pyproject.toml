@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fsamp-processor"
 version = "0.1.0"
-description = "FSAMP Processor - Event-driven file processor with FIPS 140-3 compliance"
+description = "FSAMP Processor - Event-driven file processor with a FIPS 140-3-oriented security posture"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.14"
@@ -36,7 +36,7 @@ dependencies = [
     "pydantic>=2.12.0",
     "pydantic-settings>=2.12.0",
 
-    # Cryptography (FIPS 140-3 compliant)
+    # Cryptography (FIPS 140-3-oriented)
     "cryptography>=46.0.0",
 
     # Observability

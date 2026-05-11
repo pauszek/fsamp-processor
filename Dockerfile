@@ -41,10 +41,12 @@ RUN pip install --no-cache-dir .
 # -----------------------------------------------------------------------------
 FROM python:3.14-slim-bookworm AS production
 
+ARG REQUIRE_FIPS_PROVIDER=true
+
 # Labels
 LABEL maintainer="Pauszek <pauszek@github.io>"
 LABEL org.opencontainers.image.title="FSAMP Processor"
-LABEL org.opencontainers.image.description="Event-driven file processor with FIPS 140-3 compliance"
+LABEL org.opencontainers.image.description="Event-driven file processor with a FIPS 140-3-oriented security posture"
 LABEL org.opencontainers.image.version="0.1.0"
 
 # Security: Run as non-root user
@@ -59,9 +61,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Configure OpenSSL FIPS provider for FIPS 140-3 compliance
-# This enables FIPS mode for the Python `cryptography` library and `ssl` module
-RUN openssl fipsinstall -out /usr/lib/ssl/fipsmodule.cnf -module /usr/lib/$(uname -m)-linux-gnu/ossl-modules/fips.so 2>/dev/null || true
+# Configure OpenSSL FIPS provider for a FIPS 140-3-oriented runtime.
+# Non-local builds fail closed if the base image does not contain fips.so.
+RUN FIPS_MODULE="/usr/lib/$(uname -m)-linux-gnu/ossl-modules/fips.so"; \
+    if [ -f "$FIPS_MODULE" ]; then \
+        openssl fipsinstall -out /usr/lib/ssl/fipsmodule.cnf -module "$FIPS_MODULE"; \
+    elif [ "$REQUIRE_FIPS_PROVIDER" = "true" ]; then \
+        echo "ERROR: FIPS module not found — refusing to build non-FIPS runtime image" >&2; \
+        exit 1; \
+    else \
+        echo "WARNING: FIPS module not found; allowed only for local builds" >&2; \
+    fi
 COPY <<'FIPSCONF' /etc/ssl/openssl-fips.cnf
 config_diagnostics = 1
 openssl_conf = openssl_init

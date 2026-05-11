@@ -3,7 +3,7 @@
 # =============================================================================
 """
 Tests for AWS Lambda handler functionality.
-Schema v1.0.0 compliant.
+Schema v1.1.0 compliant.
 """
 
 import json
@@ -18,7 +18,7 @@ from processor.domain.events import SCHEMA_VERSION, EventType, FileEvent
 from processor.domain.models import ProcessingResult, ProcessingStatus
 
 # =============================================================================
-# Test Constants - Schema v1.0.0
+# Test Constants - Schema v1.1.0
 # =============================================================================
 
 SAMPLE_CHECKSUM_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -69,9 +69,10 @@ def create_file_event_dict(
     event_type: str = "FILE_UPLOADED",
     filename: str = "test.pdf",
 ) -> dict[str, Any]:
-    """Create a file event dictionary matching schema v1.0.0."""
+    """Create a file event dictionary matching schema v1.1.0."""
     return {
         "schemaVersion": SCHEMA_VERSION,
+        "fileId": str(event_id or uuid4()),
         "eventId": str(event_id or uuid4()),
         "correlationId": str(correlation_id or uuid4()),
         "timestamp": datetime.now(UTC).isoformat(),
