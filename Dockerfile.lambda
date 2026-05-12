@@ -125,6 +125,18 @@ RUN dnf install -y \
     fi && \
     dnf clean all
 
+# The AWS Lambda Python base image also ships runtime site-packages under
+# /var/lang. Keep those patched too, otherwise image scanners still report
+# vulnerable packages even when the application venv in /opt is clean.
+RUN /var/lang/bin/python -m pip install --no-cache-dir --upgrade "urllib3>=2.7.0" && \
+    /var/lang/bin/python - <<'PY'
+import urllib3
+
+urllib3_version = tuple(int(part) for part in urllib3.__version__.split(".")[:3])
+if urllib3_version < (2, 7, 0):
+    raise SystemExit(f"/var/lang urllib3 {urllib3.__version__} is below 2.7.0")
+PY
+
 # ---------------------------------------------------------------------------
 # Configure OpenSSL FIPS provider
 # ---------------------------------------------------------------------------
@@ -190,6 +202,20 @@ import urllib3
 urllib3_version = tuple(int(part) for part in urllib3.__version__.split(".")[:3])
 if urllib3_version < (2, 7, 0):
     raise SystemExit(f"urllib3 {urllib3.__version__} is below the required security baseline 2.7.0")
+
+for site_packages in (
+    Path("/opt/venv/lib/python3.14/site-packages"),
+    Path("/var/lang/lib/python3.14/site-packages"),
+):
+    for metadata in site_packages.glob("urllib3-*.dist-info/METADATA"):
+        version = next(
+            line.split(":", 1)[1].strip()
+            for line in metadata.read_text(encoding="utf-8").splitlines()
+            if line.startswith("Version:")
+        )
+        metadata_version = tuple(int(part) for part in version.split(".")[:3])
+        if metadata_version < (2, 7, 0):
+            raise SystemExit(f"{metadata} reports urllib3 {version}, below 2.7.0")
 
 extension_modules = sorted(Path(cryptography.__file__).resolve().parent.rglob("*.so"))
 if not extension_modules:
