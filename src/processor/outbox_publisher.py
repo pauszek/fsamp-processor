@@ -155,7 +155,7 @@ def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
         return {"status": "skipped", "reason": "no_new_image"}
 
     # Only process PENDING events
-    status = new_image.get("status")
+    status = OutboxEvent._dynamodb_value(new_image.get("status"))
     if status != OutboxStatus.PENDING.value:
         logger.debug(
             "Skipping non-PENDING event", status=status, event_name=event_name, event_id=event_id

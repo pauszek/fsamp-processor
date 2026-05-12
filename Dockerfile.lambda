@@ -23,7 +23,8 @@
 #   docker push <account>.dkr.ecr.<region>.amazonaws.com/fsamp-<env>-processor:latest
 #
 # Local testing with RIE:
-#   docker run -p 9000:8080 fsamp-processor-lambda
+#   docker build --build-arg INCLUDE_LAMBDA_RIE=true -f Dockerfile.lambda -t fsamp-processor-lambda:local .
+#   docker run -p 9000:8080 fsamp-processor-lambda:local
 #   curl -X POST "http://localhost:9000/2015-03-31/functions/function/invocations" \
 #     -d @events/sample-sqs-event.json
 # =============================================================================
@@ -71,6 +72,8 @@ RUN pip install --no-cache-dir .
 FROM public.ecr.aws/lambda/python:3.14
 
 ARG OPENSSL_FIPS_PROVIDER=latest
+ARG AL2023_SECURITY_RELEASEVER=latest
+ARG INCLUDE_LAMBDA_RIE=false
 
 # Labels (OCI standard)
 LABEL maintainer="Pauszek <pauszek@github.io>"
@@ -80,6 +83,9 @@ LABEL org.opencontainers.image.version="0.1.0"
 LABEL org.opencontainers.image.source="https://github.com/pauszek/fsamp-processor"
 
 # Install OpenSSL CLI, the AL2023 FIPS provider, and crypto-policy tooling.
+# The Lambda base image can lag behind patched AL2023 repo content; use
+# AL2023_SECURITY_RELEASEVER for runtime security refreshes, while allowing
+# regulated builds to pin a tested releasever explicitly.
 # AL2023.7+ defaults to openssl-fips-provider-latest for regular security
 # updates. Build with --build-arg OPENSSL_FIPS_PROVIDER=certified when an
 # auditor requires the provider package that matches the NIST certificate
@@ -89,6 +95,11 @@ RUN dnf install -y \
         crypto-policies-scripts \
         openssl \
         openssl-fips-provider-latest && \
+    dnf --refresh --releasever="${AL2023_SECURITY_RELEASEVER}" update -y \
+        glibc \
+        glibc-common \
+        glibc-langpack-en \
+        glibc-minimal-langpack && \
     if [ "${OPENSSL_FIPS_PROVIDER}" = "certified" ]; then \
         dnf swap -y openssl-fips-provider-latest openssl-fips-provider-certified; \
     elif [ "${OPENSSL_FIPS_PROVIDER}" != "latest" ]; then \
@@ -109,6 +120,9 @@ RUN dnf install -y \
     test -f /etc/pki/tls/fips_local.cnf && \
     openssl list -providers -provider-path /usr/lib64/ossl-modules -provider fips \
         | grep -q "Amazon Linux 2023 - OpenSSL FIPS Provider" && \
+    if [ "${INCLUDE_LAMBDA_RIE}" != "true" ]; then \
+        rm -f /usr/local/bin/aws-lambda-rie; \
+    fi && \
     dnf clean all
 
 # ---------------------------------------------------------------------------

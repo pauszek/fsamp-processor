@@ -419,22 +419,38 @@ class OutboxEvent:
 
         return item
 
+    @staticmethod
+    def _dynamodb_value(attribute: Any) -> Any:
+        """Read either boto3 DynamoDB wire attributes or deserialized stream values."""
+        if not isinstance(attribute, dict):
+            return attribute
+        if "S" in attribute:
+            return attribute["S"]
+        if "N" in attribute:
+            return attribute["N"]
+        if "BOOL" in attribute:
+            return attribute["BOOL"]
+        if "NULL" in attribute:
+            return None
+        return attribute
+
     @classmethod
     def from_dynamodb_item(cls, item: dict[str, Any]) -> OutboxEvent:
         """Create from DynamoDB item format."""
+        payload = cls._dynamodb_value(item["payload"])
         return cls(
-            event_id=item["eventId"]["S"],
-            event_type=OutboxEventType(item["eventType"]["S"]),
-            aggregate_id=item["aggregateId"]["S"],
-            aggregate_type=item.get("aggregateType", {}).get("S", "FileProcessing"),
-            payload=json.loads(item["payload"]["S"]),
-            status=OutboxStatus(item["status"]["S"]),
-            created_at=item["createdAt"]["S"],
-            published_at=item.get("publishedAt", {}).get("S"),
-            retry_count=int(item.get("retryCount", {}).get("N", "0")),
-            last_error=item.get("lastError", {}).get("S"),
-            message_group_id=item.get("messageGroupId", {}).get("S"),
-            ttl=int(item["ttl"]["N"]) if "ttl" in item else None,
+            event_id=str(cls._dynamodb_value(item["eventId"])),
+            event_type=OutboxEventType(str(cls._dynamodb_value(item["eventType"]))),
+            aggregate_id=str(cls._dynamodb_value(item["aggregateId"])),
+            aggregate_type=str(cls._dynamodb_value(item.get("aggregateType")) or "FileProcessing"),
+            payload=payload if isinstance(payload, dict) else json.loads(str(payload)),
+            status=OutboxStatus(str(cls._dynamodb_value(item["status"]))),
+            created_at=str(cls._dynamodb_value(item["createdAt"])),
+            published_at=cls._dynamodb_value(item.get("publishedAt")),
+            retry_count=int(cls._dynamodb_value(item.get("retryCount")) or "0"),
+            last_error=cls._dynamodb_value(item.get("lastError")),
+            message_group_id=cls._dynamodb_value(item.get("messageGroupId")),
+            ttl=int(cls._dynamodb_value(item["ttl"])) if "ttl" in item else None,
         )
 
     @classmethod

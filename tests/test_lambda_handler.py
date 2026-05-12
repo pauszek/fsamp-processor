@@ -269,6 +269,116 @@ class TestRecordHandler:
         assert isinstance(call_args, FileEvent)
         assert call_args.event_type == EventType.FILE_UPLOADED
 
+    @patch("processor.lambda_handler.get_file_processor")
+    def test_record_handler_records_safe_file_metric(self, mock_get_processor):
+        """Test record handler records safe file outcomes."""
+        from aws_lambda_powertools.utilities.data_classes.sqs_event import SQSRecord
+
+        from processor.lambda_handler import record_handler
+
+        mock_processor = MagicMock()
+        mock_processor.handle.return_value = ProcessingResult(
+            event_id=str(uuid4()),
+            correlation_id=str(uuid4()),
+            status=ProcessingStatus.COMPLETED,
+            started_at=datetime.now(UTC),
+            metadata={"is_safe": True},
+        )
+        mock_get_processor.return_value = mock_processor
+
+        event_dict = create_file_event_dict()
+        record = SQSRecord(
+            {
+                "messageId": "msg-safe",
+                "receiptHandle": "receipt-safe",
+                "body": json.dumps(event_dict),
+                "attributes": {},
+                "messageAttributes": {},
+                "md5OfBody": "test",
+                "eventSource": "aws:sqs",
+                "eventSourceARN": "arn:aws:sqs:us-west-2:123456789012:test-queue",
+                "awsRegion": "us-west-2",
+            }
+        )
+
+        result = record_handler(record)
+
+        assert result["status"] == "success"
+        mock_processor.handle.assert_called_once()
+
+    @patch("processor.lambda_handler.get_file_processor")
+    def test_record_handler_records_unsafe_file_metric(self, mock_get_processor):
+        """Test record handler records unsafe file outcomes."""
+        from aws_lambda_powertools.utilities.data_classes.sqs_event import SQSRecord
+
+        from processor.lambda_handler import record_handler
+
+        mock_processor = MagicMock()
+        mock_processor.handle.return_value = ProcessingResult(
+            event_id=str(uuid4()),
+            correlation_id=str(uuid4()),
+            status=ProcessingStatus.COMPLETED,
+            started_at=datetime.now(UTC),
+            metadata={"is_safe": False},
+        )
+        mock_get_processor.return_value = mock_processor
+
+        event_dict = create_file_event_dict()
+        record = SQSRecord(
+            {
+                "messageId": "msg-unsafe",
+                "receiptHandle": "receipt-unsafe",
+                "body": json.dumps(event_dict),
+                "attributes": {},
+                "messageAttributes": {},
+                "md5OfBody": "test",
+                "eventSource": "aws:sqs",
+                "eventSourceARN": "arn:aws:sqs:us-west-2:123456789012:test-queue",
+                "awsRegion": "us-west-2",
+            }
+        )
+
+        result = record_handler(record)
+
+        assert result["status"] == "success"
+        mock_processor.handle.assert_called_once()
+
+    @patch("processor.lambda_handler.get_file_processor")
+    def test_record_handler_returns_skipped_for_non_retryable_error(self, mock_get_processor):
+        """Test non-retryable processing errors are acknowledged without retry."""
+        from aws_lambda_powertools.utilities.data_classes.sqs_event import SQSRecord
+
+        from processor.domain.exceptions import NonRetryableError
+        from processor.lambda_handler import record_handler
+
+        mock_processor = MagicMock()
+        mock_processor.handle.side_effect = NonRetryableError("permanent validation failure")
+        mock_get_processor.return_value = mock_processor
+
+        event_dict = create_file_event_dict()
+        record = SQSRecord(
+            {
+                "messageId": "msg-non-retryable",
+                "receiptHandle": "receipt-non-retryable",
+                "body": json.dumps(event_dict),
+                "attributes": {},
+                "messageAttributes": {},
+                "md5OfBody": "test",
+                "eventSource": "aws:sqs",
+                "eventSourceARN": "arn:aws:sqs:us-west-2:123456789012:test-queue",
+                "awsRegion": "us-west-2",
+            }
+        )
+
+        result = record_handler(record)
+
+        assert result == {
+            "messageId": "msg-non-retryable",
+            "status": "skipped",
+            "error": "[NON_RETRYABLE_ERROR] permanent validation failure",
+            "retryable": False,
+        }
+
 
 class TestColdStart:
     """Tests for Lambda cold start behavior."""

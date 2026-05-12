@@ -8,8 +8,8 @@
 boto3>=1.42.0
 botocore>=1.42.0
 
-# Force urllib3 upgrade (CVE-2025-66418, CVE-2025-66471)
-urllib3>=2.6.0
+# Force urllib3 upgrade for current high-severity proxy/streaming fixes
+urllib3>=2.7.0
 
 # AWS Lambda Powertools
 aws-lambda-powertools[tracer,aws-sdk]>=3.23.0

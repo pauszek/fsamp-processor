@@ -82,6 +82,62 @@ class TestOutboxPublisherRecordHandlerLogic:
         new_image = None
         assert not new_image
 
+    def test_record_handler_skips_non_insert_event(self) -> None:
+        """Test record handler skips DynamoDB stream events other than INSERT."""
+        from processor import outbox_publisher
+
+        record = MagicMock()
+        record.event_name = "MODIFY"
+        record.event_id = "stream-event-1"
+
+        result = outbox_publisher.record_handler(record)
+
+        assert result == {"status": "skipped", "reason": "not_insert"}
+
+    def test_record_handler_skips_missing_new_image(self) -> None:
+        """Test record handler skips INSERT events without a new image."""
+        from processor import outbox_publisher
+
+        record = MagicMock()
+        record.event_name = "INSERT"
+        record.event_id = "stream-event-1"
+        record.dynamodb.new_image = None
+
+        result = outbox_publisher.record_handler(record)
+
+        assert result == {"status": "skipped", "reason": "no_new_image"}
+
+    def test_record_handler_publishes_pending_event(self) -> None:
+        """Test record handler publishes pending outbox events."""
+        from processor import outbox_publisher
+
+        outbox_event = OutboxEvent.for_file_processed(
+            file_id="file-123",
+            correlation_id="corr-123",
+            file_hash="a" * 64,
+            is_safe=True,
+            bucket_name="bucket",
+            object_key="object",
+        )
+        record = MagicMock()
+        record.event_name = "INSERT"
+        record.event_id = "stream-event-1"
+        record.dynamodb.new_image = outbox_event.to_dynamodb_item()
+
+        with (
+            patch.object(outbox_publisher, "publish_to_sns") as publish_to_sns,
+            patch.object(outbox_publisher, "mark_event_published") as mark_event_published,
+        ):
+            result = outbox_publisher.record_handler(record)
+
+        assert result == {
+            "status": "published",
+            "event_id": outbox_event.event_id,
+            "event_type": outbox_event.event_type.value,
+        }
+        publish_to_sns.assert_called_once()
+        mark_event_published.assert_called_once()
+
 
 class TestOutboxPublisherPublishToSNS:
     """Tests for publish_to_sns function."""
@@ -115,6 +171,34 @@ class TestOutboxPublisherPublishToSNS:
 
         assert result == "test-message-id"
         mock_sns.publish.assert_called_once()
+
+    def test_publish_to_sns_adds_file_context_attributes(self) -> None:
+        """Test SNS publishing includes file context attributes for filtering."""
+        from processor import outbox_publisher
+
+        mock_sns = MagicMock()
+        mock_sns.publish.return_value = {"MessageId": "test-message-id"}
+
+        outbox_event = OutboxEvent(
+            event_id="test-event-id",
+            event_type=OutboxEventType.FILE_PROCESSED,
+            aggregate_id="file-123",
+            aggregate_type="FileProcessing",
+            payload={
+                "schemaVersion": "1.1.0",
+                "eventType": "FILE_PROCESSED",
+                "fileId": "file-123",
+                "correlationId": "corr-123",
+            },
+        )
+
+        with patch.object(outbox_publisher, "get_sns_client", return_value=mock_sns):
+            result = outbox_publisher.publish_to_sns(outbox_event)
+
+        assert result == "test-message-id"
+        message_attributes = mock_sns.publish.call_args.kwargs["MessageAttributes"]
+        assert message_attributes["fileId"]["StringValue"] == "file-123"
+        assert message_attributes["correlationId"]["StringValue"] == "corr-123"
 
 
 class TestOutboxPublisherMarkEventPublished:
@@ -222,6 +306,21 @@ class TestOutboxPublisherLambdaHandler:
 
         # MAX_RETRY_COUNT should have a default
         assert outbox_publisher.MAX_RETRY_COUNT >= 0
+
+    def test_settings_values_take_precedence_over_environment(self) -> None:
+        """Test resolved settings override fallback environment values."""
+        from processor import outbox_publisher
+
+        outbox_publisher._settings = MagicMock(
+            sns_topic_arn="arn:aws:sns:us-west-2:123456789012:settings-topic",
+            outbox_table_name="settings-outbox",
+        )
+
+        assert (
+            outbox_publisher.get_sns_topic_arn()
+            == "arn:aws:sns:us-west-2:123456789012:settings-topic"
+        )
+        assert outbox_publisher.get_outbox_table_name() == "settings-outbox"
 
 
 class TestOutboxPublisherRetryHandler:
