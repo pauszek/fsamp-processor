@@ -71,7 +71,7 @@ Resources:
       Description: FSAMP file processor with FIPS 140-3 compliance
       CodeUri: .
       Handler: processor.lambda_handler.lambda_handler
-      
+
       Environment:
         Variables:
           ENVIRONMENT: !Ref Environment
@@ -83,12 +83,12 @@ Resources:
           KMS_KEY_ID: !Ref KMSKeyId
           LOG_LEVEL: !If [IsProd, INFO, DEBUG]
           LOG_FORMAT: json
-          
+
       # Dead Letter Queue
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt ProcessorDLQ.Arn
-      
+
       # SQS Event Source (triggers Lambda from queue)
       Events:
         SQSTrigger:
@@ -99,7 +99,7 @@ Resources:
             MaximumBatchingWindowInSeconds: 5
             FunctionResponseTypes:
               - ReportBatchItemFailures
-      
+
       # IAM Policies
       Policies:
         # S3 Access
@@ -107,15 +107,15 @@ Resources:
             BucketName: !Ref S3BucketName
         - S3WritePolicy:
             BucketName: !Ref S3BucketName
-            
+
         # DynamoDB Access
         - DynamoDBCrudPolicy:
             TableName: !Ref DynamoDBTableName
-            
+
         # SNS Publish
         - SNSPublishMessagePolicy:
             TopicName: !Select [5, !Split [":", !Ref SNSTopicArn]]
-            
+
         # KMS Decrypt/Encrypt
         - KMSDecryptPolicy:
             KeyId: !Ref KMSKeyId
@@ -126,18 +126,18 @@ Resources:
                 - kms:GenerateDataKey
                 - kms:GenerateDataKeyWithoutPlaintext
               Resource: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/*
-              
+
         # SQS for DLQ
         - SQSSendMessagePolicy:
             QueueName: !GetAtt ProcessorDLQ.QueueName
-            
+
         # X-Ray Tracing
         - AWSXRayDaemonWriteAccess
-        
+
       Tags:
         Service: processor
         Environment: !Ref Environment
-        
+
     Metadata:
       BuildMethod: python3.14
       BuildProperties:

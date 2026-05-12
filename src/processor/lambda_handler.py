@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, cast
 
 from aws_lambda_powertools import Logger, Metrics, Tracer
 from aws_lambda_powertools.metrics import MetricUnit
@@ -45,7 +45,7 @@ from processor.application import FileProcessorService
 from processor.config import Settings, get_settings
 from processor.domain.events import FileEvent
 from processor.domain.exceptions import NonRetryableError, ProcessingError
-from processor.infrastructure import AWSClientFactory
+from processor.infrastructure import AWSClientFactory, enforce_fips
 
 # =============================================================================
 # AWS Lambda Powertools Configuration
@@ -82,6 +82,9 @@ def get_file_processor() -> FileProcessorService:
 
     # Load settings
     _settings = get_settings()
+
+    # Enforce FIPS mode when required
+    enforce_fips(_settings.should_require_fips)
 
     # Create AWS client factory with FIPS support
     aws_factory = AWSClientFactory(
@@ -183,12 +186,14 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         # Add event context to logger and tracer
         logger.append_keys(
             event_id=str(file_event.event_id),
+            file_id=file_event.file_id_str,
             correlation_id=file_event.correlation_id,
             event_type=file_event.event_type.value,
         )
         tracer.put_annotation("event_id", str(file_event.event_id))
+        tracer.put_annotation("file_id", file_event.file_id_str)
         tracer.put_annotation("event_type", file_event.event_type.value)
-        tracer.put_annotation("correlation_id", file_event.correlation_id)
+        tracer.put_annotation("correlation_id", str(file_event.correlation_id))
 
         # Record file size metric
         file_size_bytes = file_event.file_metadata.file_size_bytes
@@ -240,6 +245,7 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         return {
             "messageId": message_id,
             "status": "success",
+            "fileId": file_event.file_id_str,
             "eventId": str(file_event.event_id),
             "processingStatus": result.status.value,
             "durationMs": total_duration_ms,
@@ -288,10 +294,10 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
 # =============================================================================
 
 
-@logger.inject_lambda_context(log_event=True)
+@logger.inject_lambda_context(log_event=False)
 @tracer.capture_lambda_handler
 @metrics.log_metrics(capture_cold_start_metric=True)
-@batch_processor(record_handler=record_handler, processor=processor)
+@batch_processor(record_handler=record_handler, processor=processor)  # type: ignore[untyped-decorator]
 def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
     """
     AWS Lambda handler for SQS-triggered file processing.
@@ -327,7 +333,7 @@ def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, A
 
     # The @batch_processor decorator handles processing and returns
     # {"batchItemFailures": [...]} for partial batch response
-    return processor.response()
+    return cast(dict[str, Any], processor.response())
 
 
 # =============================================================================
@@ -345,12 +351,13 @@ if __name__ == "__main__":
                 "receiptHandle": "test-receipt",
                 "body": json.dumps(
                     {
-                        "event_id": "test-event-123",
+                        "schema_version": "1.1.0",
+                        "file_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "event_id": "550e8400-e29b-41d4-a716-446655440001",
                         "event_type": "FILE_UPLOADED",
-                        "correlation_id": "test-correlation",
+                        "correlation_id": "550e8400-e29b-41d4-a716-446655440002",
                         "timestamp": "2024-01-01T00:00:00Z",
-                        "source": "test",
-                        "schema_version": "1.0.0",
+                        "source": "fsamp-gateway",
                         "file_metadata": {
                             "file_id": "test-file-123",
                             "original_filename": "test.pdf",
@@ -386,7 +393,7 @@ if __name__ == "__main__":
         invoked_function_arn = "arn:aws:lambda:us-west-2:123456789:function:test"
         aws_request_id = "test-request-id"
 
-        def get_remaining_time_in_millis(self):
+        def get_remaining_time_in_millis(self) -> int:
             return 300000
 
     print("Testing Lambda handler locally...")

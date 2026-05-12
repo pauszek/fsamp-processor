@@ -29,6 +29,7 @@ class TestGetFileProcessor:
         mock_settings.aws_region = "us-east-1"
         mock_settings.aws_endpoint_url = None
         mock_settings.should_use_fips = False
+        mock_settings.should_require_fips = False
         mock_settings.kms_key_id = VALID_KMS_KEY_ID
         mock_settings.dynamodb_table_name = "test-table"
         mock_settings.sns_topic_arn = "arn:aws:sns:us-east-1:123456789012:test"
@@ -80,6 +81,7 @@ class TestGetFileProcessor:
         mock_settings.aws_region = "us-east-1"
         mock_settings.aws_endpoint_url = None
         mock_settings.should_use_fips = False
+        mock_settings.should_require_fips = False
         mock_settings.kms_key_id = VALID_KMS_KEY_ID
         mock_settings.dynamodb_table_name = "test-table"
         mock_settings.sns_topic_arn = "arn:aws:sns:us-east-1:123456789012:test"
@@ -116,7 +118,8 @@ class TestRecordHandlerLogic:
     def sample_file_event_dict(self) -> dict:
         """Create sample file event dictionary with valid data."""
         return {
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
+            "file_id": str(uuid4()),
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),
             "timestamp": datetime.now(UTC).isoformat(),

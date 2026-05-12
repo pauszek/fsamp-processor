@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fsamp-processor"
 version = "0.1.0"
-description = "FSAMP Processor - Event-driven file processor with FIPS 140-3 compliance"
+description = "FSAMP Processor - Event-driven file processor with a FIPS 140-3-oriented security posture"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.14"
@@ -25,24 +25,24 @@ dependencies = [
     # AWS SDK
     "boto3>=1.42.0",
     "botocore>=1.42.0",
-    
-    # Force urllib3 upgrade (CVE-2025-66418, CVE-2025-66471)
-    "urllib3>=2.6.0",
-    
+
+    # Force urllib3 upgrade for current high-severity proxy/streaming fixes
+    "urllib3>=2.7.0",
+
     # AWS Lambda Powertools (logging, tracing, metrics, batch)
     "aws-lambda-powertools[tracer,aws-sdk]>=3.23.0",
-    
+
     # Validation & Settings
     "pydantic>=2.12.0",
     "pydantic-settings>=2.12.0",
-    
-    # Cryptography (FIPS 140-3 compliant)
+
+    # Cryptography (FIPS 140-3-oriented)
     "cryptography>=46.0.0",
-    
+
     # Observability
     "structlog>=25.5.0",
     "python-json-logger>=4.0.0",
-    
+
     # Utilities
     "tenacity>=9.1.0",
     "python-dateutil>=2.9.0",
@@ -156,8 +156,11 @@ python_version = "3.14"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+disallow_subclassing_any = true
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
+disallow_untyped_calls = true
+disallow_any_generics = true
 check_untyped_defs = true
 disallow_untyped_decorators = true
 no_implicit_optional = true
@@ -211,3 +214,6 @@ exclude_lines = [
 ]
 fail_under = 80
 show_missing = true
+
+[tool.bandit]
+exclude_dirs = ["tests", "infrastructure", ".venv"]

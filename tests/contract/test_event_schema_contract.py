@@ -1,5 +1,5 @@
 # =============================================================================
-# Contract Tests - Event Schema Compliance (v1.0.0)
+# Contract Tests - Event Schema Compliance (v1.1.0)
 # =============================================================================
 """
 Contract tests ensuring domain events comply with the shared JSON Schema.
@@ -10,8 +10,8 @@ These tests serve as a contract between:
 
 Both services validate against the same schema from fsamp-event-schema repo.
 
-Schema Version: 1.0.0
-FIPS 140-3 Compliance: Required
+Schema Version: 1.1.0
+FIPS 140-3-oriented constraints: Required
 """
 
 import json
@@ -58,7 +58,7 @@ def _find_schema_path() -> Path | None:
 
 @pytest.fixture
 def event_schema() -> dict:
-    """Load the shared event schema v1.0.0."""
+    """Load the shared event schema v1.1.0."""
     schema_path = _find_schema_path()
     if schema_path is None:
         pytest.skip(
@@ -74,9 +74,10 @@ def _create_valid_event(
     event_type: EventType = EventType.FILE_UPLOADED,
     source: EventSource = EventSource.PROCESSOR,
 ) -> FileEvent:
-    """Create a valid FileEvent conforming to schema v1.0.0."""
+    """Create a valid FileEvent conforming to schema v1.1.0."""
     return FileEvent(
         schema_version=SCHEMA_VERSION,
+        file_id=uuid4(),
         event_id=uuid4(),
         correlation_id=uuid4(),
         timestamp=datetime.now(UTC),
@@ -108,18 +109,18 @@ def sample_file_event() -> FileEvent:
 
 @pytest.mark.skipif(not HAS_JSONSCHEMA, reason="jsonschema not installed")
 class TestEventSchemaContract:
-    """Contract tests for event schema compliance v1.0.0."""
+    """Contract tests for event schema compliance v1.1.0."""
 
     def test_schema_is_valid_json_schema(self, event_schema: dict) -> None:
         """Verify the schema itself is valid JSON Schema Draft 7."""
         Draft7Validator.check_schema(event_schema)
 
     def test_schema_version_matches(self, event_schema: dict) -> None:
-        """Verify schema version is 1.0.0."""
+        """Verify schema version is 1.1.0."""
         schema_version = event_schema["properties"]["schemaVersion"]["const"]
-        assert schema_version == SCHEMA_VERSION, (
-            f"Schema version mismatch. Expected: {SCHEMA_VERSION}, Got: {schema_version}"
-        )
+        assert (
+            schema_version == SCHEMA_VERSION
+        ), f"Schema version mismatch. Expected: {SCHEMA_VERSION}, Got: {schema_version}"
 
     def test_domain_event_matches_schema(
         self, event_schema: dict, sample_file_event: FileEvent
@@ -143,10 +144,11 @@ class TestEventSchemaContract:
         assert not missing, f"Domain missing event types from schema: {missing}"
 
     def test_required_fields_present(self, event_schema: dict) -> None:
-        """Verify required fields in schema v1.0.0 match our domain model."""
+        """Verify required fields in schema v1.1.0 match our domain model."""
         required_fields = set(event_schema.get("required", []))
         expected_required = {
             "schemaVersion",
+            "fileId",
             "eventId",
             "correlationId",
             "timestamp",
@@ -167,9 +169,9 @@ class TestEventSchemaContract:
         allowed_sources = set(event_schema["properties"]["source"]["enum"])
         expected_sources = {e.value for e in EventSource}
 
-        assert allowed_sources == expected_sources, (
-            f"Source enum mismatch. Schema: {allowed_sources}, Domain: {expected_sources}"
-        )
+        assert (
+            allowed_sources == expected_sources
+        ), f"Source enum mismatch. Schema: {allowed_sources}, Domain: {expected_sources}"
 
     @pytest.mark.parametrize("event_type", list(EventType))
     def test_all_event_types_produce_valid_json(
@@ -190,18 +192,18 @@ class TestFIPSCompliance:
     def test_encryption_is_mandatory(self, event_schema: dict) -> None:
         """Verify isEncrypted must always be true (FIPS requirement)."""
         is_encrypted = event_schema["properties"]["securityContext"]["properties"]["isEncrypted"]
-        assert is_encrypted.get("const") is True, (
-            "isEncrypted must be const: true for FIPS compliance"
-        )
+        assert (
+            is_encrypted.get("const") is True
+        ), "isEncrypted must be const: true for FIPS compliance"
 
     def test_only_aes_gcm_allowed(self, event_schema: dict) -> None:
         """Verify only AES-256-GCM is allowed (NIST SP 800-38D)."""
         encryption_alg = event_schema["properties"]["securityContext"]["properties"][
             "encryptionAlgorithm"
         ]
-        assert encryption_alg.get("const") == "AES/GCM/NoPadding", (
-            "Only AES/GCM/NoPadding should be allowed for FIPS 140-3"
-        )
+        assert (
+            encryption_alg.get("const") == "AES/GCM/NoPadding"
+        ), "Only AES/GCM/NoPadding should be allowed for FIPS 140-3"
 
     def test_kms_key_required(self, event_schema: dict) -> None:
         """Verify KMS key is required for envelope encryption."""
@@ -213,9 +215,9 @@ class TestFIPSCompliance:
     def test_checksum_sha256_required(self, event_schema: dict) -> None:
         """Verify SHA-256 checksum is required (FIPS 180-4)."""
         file_metadata_required = event_schema["properties"]["fileMetadata"].get("required", [])
-        assert "checksumSHA256" in file_metadata_required, (
-            "checksumSHA256 must be required for FIPS 180-4 compliance"
-        )
+        assert (
+            "checksumSHA256" in file_metadata_required
+        ), "checksumSHA256 must be required for FIPS 180-4 compliance"
 
     def test_checksum_format_is_valid(self, sample_file_event: FileEvent) -> None:
         """Verify checksum is valid SHA-256 format (64 hex chars)."""
@@ -228,13 +230,14 @@ class TestBackwardsCompatibility:
     """Tests for strict validation - no backwards compatibility for security."""
 
     def test_correlation_id_must_be_uuid(self) -> None:
-        """Verify that correlationId must be UUID (schema v1.0.0 change)."""
+        """Verify that correlationId must be UUID (schema v1.1.0 change)."""
         from pydantic import ValidationError
 
         # Old string format - should fail at construction
         with pytest.raises(ValidationError) as exc_info:
             FileEvent(
                 schema_version=SCHEMA_VERSION,
+                file_id=uuid4(),
                 event_id=uuid4(),
                 correlation_id="not-a-uuid",  # Invalid - must be UUID
                 timestamp=datetime.now(UTC),
@@ -259,12 +262,27 @@ class TestBackwardsCompatibility:
 
         assert "correlation_id" in str(exc_info.value).lower()
 
+    def test_legacy_event_without_file_id_rejected(self) -> None:
+        """Verify that old events without fileId are rejected in strict mode."""
+        from pydantic import ValidationError
+
+        event_data = json.loads(
+            _create_valid_event().model_dump_json(by_alias=True, exclude_none=True)
+        )
+        event_data.pop("fileId")
+
+        with pytest.raises(ValidationError) as exc_info:
+            FileEvent.model_validate(event_data)
+
+        assert "fileid" in str(exc_info.value).lower() or "file_id" in str(exc_info.value).lower()
+
     def test_additional_properties_rejected(self) -> None:
         """Verify that additional unknown properties are rejected (strict mode)."""
         from pydantic import ValidationError
 
         event_data = {
             "schemaVersion": SCHEMA_VERSION,
+            "fileId": str(uuid4()),
             "eventId": str(uuid4()),
             "correlationId": str(uuid4()),
             "timestamp": datetime.now(UTC).isoformat(),
@@ -336,7 +354,8 @@ class TestSchemaValidation:
         from jsonschema import ValidationError as JsonSchemaError
 
         invalid_json = {
-            "schemaVersion": "1.0.0",
+            "schemaVersion": "1.1.0",
+            "fileId": str(uuid4()),
             "eventId": str(uuid4()),
             "correlationId": str(uuid4()),
             "timestamp": datetime.now(UTC).isoformat(),
@@ -367,7 +386,8 @@ class TestSchemaValidation:
         from jsonschema import ValidationError as JsonSchemaError
 
         invalid_json = {
-            "schemaVersion": "1.0.0",
+            "schemaVersion": "1.1.0",
+            "fileId": str(uuid4()),
             "eventId": str(uuid4()),
             "correlationId": str(uuid4()),
             "timestamp": datetime.now(UTC).isoformat(),
@@ -388,6 +408,19 @@ class TestSchemaValidation:
                 "kmsKeyId": "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
             },
         }
+
+        with pytest.raises(JsonSchemaError):
+            validate(instance=invalid_json, schema=event_schema)
+
+    @pytest.mark.skipif(not HAS_JSONSCHEMA, reason="jsonschema not installed")
+    def test_missing_file_id_rejected(self, event_schema: dict) -> None:
+        """Verify legacy events without fileId are rejected by schema."""
+        from jsonschema import ValidationError as JsonSchemaError
+
+        invalid_json = json.loads(
+            _create_valid_event().model_dump_json(by_alias=True, exclude_none=True)
+        )
+        invalid_json.pop("fileId")
 
         with pytest.raises(JsonSchemaError):
             validate(instance=invalid_json, schema=event_schema)

@@ -1,6 +1,4 @@
 # =============================================================================
-# Outbox Repository Adapter - DynamoDB Implementation
-# =============================================================================
 """
 DynamoDB implementation of the Outbox Pattern for reliable event publishing.
 
@@ -17,7 +15,7 @@ Architecture:
                                             Outbox Publisher Lambda -> SNS
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -30,11 +28,7 @@ from tenacity import (
 )
 
 from processor.domain.exceptions import StorageError
-from processor.domain.models import (
-    MetadataRecord,
-    OutboxEvent,
-    OutboxStatus,
-)
+from processor.domain.models import MetadataRecord, OutboxEvent, OutboxStatus
 from processor.ports.outbound import OutboxRepository
 
 logger = structlog.get_logger(__name__)
@@ -218,9 +212,9 @@ class DynamoDBOutboxRepository(OutboxRepository):
         log = logger.bind(event_id=event_id)
 
         try:
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(UTC).isoformat()
             # Set TTL to 24 hours from now for automatic cleanup
-            ttl = int((datetime.utcnow() + timedelta(hours=24)).timestamp())
+            ttl = int((datetime.now(UTC) + timedelta(hours=24)).timestamp())
 
             self._client.update_item(
                 TableName=self._outbox_table_name,
@@ -357,7 +351,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
         deleted_count = 0
 
         try:
-            cutoff = (datetime.utcnow() - timedelta(hours=older_than_hours)).isoformat()
+            cutoff = (datetime.now(UTC) - timedelta(hours=older_than_hours)).isoformat()
 
             # Query published events older than cutoff
             response = self._client.query(
@@ -427,7 +421,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
         )
 
         try:
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(UTC).isoformat()
             outbox_item = outbox_event.to_dynamodb_item()
 
             update_expr = "SET #status = :status, updatedAt = :updated, GSI1PK = :gsi1pk"

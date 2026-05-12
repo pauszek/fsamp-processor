@@ -36,14 +36,24 @@ _localstack_container: LocalStackContainer | None = None
 
 
 def get_localstack_container() -> LocalStackContainer:
-    """Get or create the LocalStack container."""
+    """Get or create the LocalStack Pro container."""
     global _localstack_container
 
     if _localstack_container is None:
-        _localstack_container = LocalStackContainer(
-            image="localstack/localstack:3.8.1"
+        _localstack_container = LocalStackContainer(image="localstack/localstack-pro:4.14.0")
+        _localstack_container.with_services(
+            "s3", "sqs", "sns", "dynamodb", "kms", "iam", "sts", "cloudwatch", "logs"
         )
-        _localstack_container.with_services("s3", "sqs", "sns", "dynamodb", "kms")
+
+        # LocalStack Pro auth token (required for Pro features)
+        auth_token = os.environ.get("LOCALSTACK_AUTH_TOKEN", "")
+        if auth_token:
+            _localstack_container.with_env("LOCALSTACK_AUTH_TOKEN", auth_token)
+
+        # IAM policy enforcement for realistic testing
+        _localstack_container.with_env("ENFORCE_IAM", "1")
+        _localstack_container.with_env("IAM_SOFT_MODE", "0")
+
         _localstack_container.start()
 
     return _localstack_container
@@ -70,6 +80,7 @@ def localstack_endpoint(localstack: LocalStackContainer) -> str:
 # =============================================================================
 # AWS Client Fixtures (LocalStack)
 # =============================================================================
+
 
 @pytest.fixture
 def localstack_s3_client(localstack_endpoint: str) -> Generator[boto3.client]:
@@ -140,6 +151,7 @@ def localstack_kms_client(localstack_endpoint: str) -> Generator[boto3.client]:
 # Resource Fixtures (LocalStack)
 # =============================================================================
 
+
 @pytest.fixture
 def localstack_bucket(localstack_s3_client: boto3.client) -> str:
     """Create a test S3 bucket in LocalStack."""
@@ -160,6 +172,7 @@ def localstack_bucket(localstack_s3_client: boto3.client) -> str:
 def localstack_queue_url(localstack_sqs_client: boto3.client) -> str:
     """Create a test SQS queue in LocalStack."""
     import uuid
+
     queue_name = f"test-queue-{uuid.uuid4().hex[:8]}"
 
     response = localstack_sqs_client.create_queue(
@@ -176,6 +189,7 @@ def localstack_queue_url(localstack_sqs_client: boto3.client) -> str:
 def localstack_topic_arn(localstack_sns_client: boto3.client) -> str:
     """Create a test SNS topic in LocalStack."""
     import uuid
+
     topic_name = f"test-topic-{uuid.uuid4().hex[:8]}"
 
     response = localstack_sns_client.create_topic(Name=topic_name)
@@ -186,6 +200,7 @@ def localstack_topic_arn(localstack_sns_client: boto3.client) -> str:
 def localstack_table_name(localstack_dynamodb_client: boto3.client) -> str:
     """Create a test DynamoDB table in LocalStack."""
     import uuid
+
     table_name = f"test-table-{uuid.uuid4().hex[:8]}"
 
     try:
@@ -237,6 +252,7 @@ def localstack_kms_key_id(localstack_kms_client: boto3.client) -> str:
 # =============================================================================
 # Environment Setup for Integration Tests
 # =============================================================================
+
 
 @pytest.fixture(autouse=True)
 def localstack_env(localstack_endpoint: str) -> Generator[None]:

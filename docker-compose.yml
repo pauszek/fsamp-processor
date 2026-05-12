@@ -13,6 +13,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: production
+      args:
+        REQUIRE_FIPS_PROVIDER: "false"
     container_name: fsamp-processor
     restart: unless-stopped
     depends_on:
@@ -23,20 +25,23 @@ services:
       - ENVIRONMENT=local
       - LOG_LEVEL=DEBUG
       - LOG_FORMAT=console
-      
+
       # AWS Configuration (LocalStack)
       - AWS_REGION=us-west-2
       - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
-      
+      - USE_FIPS_ENDPOINT=false
+      - FIPS_REQUIRED=false
+
       # Resource ARNs/URLs (must match Terraform outputs)
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-processing-queue
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-file-processing
       - SNS_TOPIC_ARN=arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
       - S3_BUCKET_NAME=fsamp-local-files
-      - DYNAMODB_TABLE_NAME=fsamp-local-metadata
+      - DYNAMODB_TABLE_NAME=fsamp-local-file-metadata
+      - OUTBOX_TABLE_NAME=fsamp-local-outbox
       - KMS_KEY_ID=alias/fsamp-local-master-key
-      
+
       # Processing settings
       - SQS_MAX_MESSAGES=10
       - SQS_WAIT_TIME_SECONDS=20
@@ -54,7 +59,7 @@ services:
   # LocalStack (AWS emulator)
   # ---------------------------------------------------------------------------
   localstack:
-    image: localstack/localstack-pro:4.0
+    image: localstack/localstack-pro:4.14.0
     container_name: fsamp-processor-localstack
     ports:
       - "4566:4566"

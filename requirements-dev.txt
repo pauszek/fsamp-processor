@@ -24,9 +24,14 @@ isort>=5.13.0
 # Pre-commit hooks
 pre-commit>=4.0.0
 
+# Security Scanning
+pip-audit>=2.7.0
+cyclonedx-bom>=4.0.0
+safety>=3.2.0
+bandit>=1.7.0
+
 # LocalStack testing
 localstack-client>=2.6.0
 
 # Integration testing with Testcontainers
-testcontainers[localstack]>=4.8.0
 testcontainers[localstack]>=4.8.0

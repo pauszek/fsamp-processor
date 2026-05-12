@@ -5,7 +5,7 @@
 Factory for creating AWS clients with proper configuration.
 Supports both real AWS and LocalStack endpoints.
 
-FIPS 140-3 Compliance:
+FIPS 140-3-oriented posture:
 - Uses FIPS-validated endpoints when available (us-* regions)
 - Configurable via USE_FIPS_ENDPOINT environment variable
 - Automatically disabled for LocalStack
@@ -59,7 +59,7 @@ class AWSClientFactory:
     - Consistent retry and timeout settings
     - Client caching for reuse
 
-    FIPS 140-3 Compliance:
+    FIPS 140-3-oriented posture:
     - When use_fips=True and region starts with 'us-', FIPS endpoints are used
     - FIPS endpoints are validated by NIST for cryptographic operations
     - KMS FIPS endpoints use HSMs validated to FIPS 140-3 Level 3

@@ -95,7 +95,7 @@ class SNSEventPublisher(EventPublisher):
             message_id = response["MessageId"]
             log.info("Event published successfully", message_id=message_id)
 
-            return message_id
+            return str(message_id)
 
         except ClientError as e:
             log.exception("Failed to publish event")
@@ -184,7 +184,7 @@ class SNSEventPublisher(EventPublisher):
             message_id = response["MessageId"]
             log.info("Event published to queue", message_id=message_id)
 
-            return message_id
+            return str(message_id)
 
         except ClientError as e:
             log.exception("Failed to publish to queue")

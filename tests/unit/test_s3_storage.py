@@ -150,20 +150,19 @@ class TestS3FileStorageUpload:
         assert call_kwargs["ServerSideEncryption"] == "aws:kms"
         assert call_kwargs["SSEKMSKeyId"] == "test-key"
 
-    def test_upload_without_kms(self) -> None:
-        """Test upload without KMS uses SSE-S3."""
+    def test_upload_without_kms_raises_error(self) -> None:
+        """Test upload without KMS raises StorageError (FedRAMP SC-13)."""
         client = MagicMock()
-        client.put_object.return_value = {"ETag": '"abc"'}
         storage = S3FileStorage(s3_client=client)
 
-        storage.upload(
-            bucket_name="test-bucket",
-            object_key="test-key",
-            data=b"test content",
-        )
+        with pytest.raises(StorageError, match="KMS key is required"):
+            storage.upload(
+                bucket_name="test-bucket",
+                object_key="test-key",
+                data=b"test content",
+            )
 
-        call_kwargs = client.put_object.call_args.kwargs
-        assert call_kwargs["ServerSideEncryption"] == "AES256"
+        client.put_object.assert_not_called()
 
     def test_upload_error(self) -> None:
         """Test upload with error."""
@@ -172,7 +171,7 @@ class TestS3FileStorageUpload:
             {"Error": {"Code": "InternalError"}},
             "PutObject",
         )
-        storage = S3FileStorage(s3_client=client)
+        storage = S3FileStorage(s3_client=client, default_kms_key_id="test-key")
 
         with pytest.raises(StorageError):
             storage.upload("bucket", "key", b"data")

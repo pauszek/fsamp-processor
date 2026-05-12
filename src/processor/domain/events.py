@@ -1,17 +1,19 @@
 # =============================================================================
-# Domain Events - Pydantic Models (Schema v1.0.0)
+# Domain Events - Pydantic Models (Schema v1.1.0)
 # =============================================================================
 """
-Event models matching the FSAMP event.schema.json specification v1.0.0.
+Event models matching the FSAMP event.schema.json specification v1.1.0.
 These are the core domain events flowing through the system.
 
-FIPS 140-3 Compliance:
+FIPS 140-3-oriented constraints:
 - Only AES-256-GCM encryption allowed (NIST SP 800-38D)
 - SHA-256 checksums required (FIPS 180-4)
 - All files must be encrypted
 """
 
-from datetime import datetime
+from __future__ import annotations
+
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID
@@ -19,7 +21,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 # Schema version for forward compatibility
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 
 class EventType(StrEnum):
@@ -125,7 +127,7 @@ class StorageLocation(BaseModel):
 
 class SecurityContext(BaseModel):
     """
-    Cryptographic metadata required for FIPS 140-3 compliance.
+    Cryptographic metadata required by the FIPS 140-3-oriented posture.
 
     Only AES-256-GCM is permitted per NIST SP 800-38D.
     All files MUST be encrypted - unencrypted files are rejected.
@@ -144,7 +146,7 @@ class SecurityContext(BaseModel):
         Literal["AES/GCM/NoPadding"],  # Only AES-GCM allowed
         Field(
             alias="encryptionAlgorithm",
-            description="FIPS 140-3 compliant algorithm (AES-256-GCM only)",
+            description="FIPS 140-3-oriented algorithm constraint (AES-256-GCM only)",
         ),
     ]
     kms_key_id: Annotated[
@@ -160,10 +162,10 @@ class SecurityContext(BaseModel):
 class FileEvent(BaseModel):
     """
     Standard event definition for FSAMP platform file processing flow.
-    Schema version: 1.0.0
+    Schema version: 1.1.0
 
     This is the main event schema used for inter-service communication.
-    Compliant with FIPS 140-3 cryptographic requirements.
+    Includes constraints used by the FIPS 140-3-oriented security posture.
     """
 
     model_config = ConfigDict(
@@ -173,17 +175,24 @@ class FileEvent(BaseModel):
     )
 
     schema_version: Annotated[
-        Literal["1.0.0"],
+        Literal["1.1.0"],
         Field(
             alias="schemaVersion",
             description="Schema version for forward compatibility",
+        ),
+    ]
+    file_id: Annotated[
+        UUID,
+        Field(
+            alias="fileId",
+            description="Stable aggregate identifier for the file across services (UUID v4)",
         ),
     ]
     event_id: Annotated[
         UUID,
         Field(
             alias="eventId",
-            description="Unique identifier for the event (UUID v4)",
+            description="Unique identifier for this event occurrence (UUID v4)",
         ),
     ]
     correlation_id: Annotated[
@@ -247,6 +256,11 @@ class FileEvent(BaseModel):
         return str(self.event_id)
 
     @property
+    def file_id_str(self) -> str:
+        """String representation of file_id for serialization boundaries."""
+        return str(self.file_id)
+
+    @property
     def correlation_id_str(self) -> str:
         """String representation of correlation_id for serialization boundaries."""
         return str(self.correlation_id)
@@ -256,7 +270,7 @@ class FileEvent(BaseModel):
         return self.model_copy(
             update={
                 "event_type": event_type,
-                "timestamp": datetime.utcnow(),
+                "timestamp": datetime.now(UTC),
                 "source": EventSource.PROCESSOR,
             }
         )

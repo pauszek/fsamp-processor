@@ -6,10 +6,12 @@ Core domain models representing the state and results of file processing.
 Implements Outbox Pattern for reliable event publishing.
 """
 
+from __future__ import annotations
+
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -35,6 +37,7 @@ class OutboxStatus(StrEnum):
 class OutboxEventType(StrEnum):
     """Types of events in the outbox."""
 
+    FILE_UPLOADED = "FILE_UPLOADED"
     FILE_PROCESSED = "FILE_PROCESSED"
     FILE_FAILED = "FILE_FAILED"
     FILE_SCAN_COMPLETED = "FILE_SCAN_COMPLETED"
@@ -89,7 +92,7 @@ class ProcessingResult:
             correlation_id=self.correlation_id,
             status=status,
             started_at=self.started_at,
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(UTC),
             error_message=error_message,
             error_code=error_code,
             retry_count=self.retry_count,
@@ -125,7 +128,7 @@ class AnalysisResult:
     is_safe: bool
     scan_engine: str = "internal"
     findings: list[str] = field(default_factory=list)
-    analyzed_at: datetime = field(default_factory=datetime.utcnow)
+    analyzed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -288,7 +291,7 @@ class OutboxEvent:
     status: OutboxStatus = OutboxStatus.PENDING
 
     # Timestamps
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     published_at: str | None = None
 
     # Retry tracking for failed publishes
@@ -341,7 +344,7 @@ class OutboxEvent:
                 "isSafe": is_safe,
                 "bucketName": bucket_name,
                 "objectKey": object_key,
-                "processedAt": datetime.utcnow().isoformat(),
+                "processedAt": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -362,7 +365,7 @@ class OutboxEvent:
                 "correlationId": correlation_id,
                 "errorCode": error_code,
                 "errorMessage": error_message,
-                "failedAt": datetime.utcnow().isoformat(),
+                "failedAt": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -383,7 +386,7 @@ class OutboxEvent:
                 "correlationId": correlation_id,
                 "reason": reason,
                 "findings": findings,
-                "quarantinedAt": datetime.utcnow().isoformat(),
+                "quarantinedAt": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -416,22 +419,38 @@ class OutboxEvent:
 
         return item
 
+    @staticmethod
+    def _dynamodb_value(attribute: Any) -> Any:
+        """Read either boto3 DynamoDB wire attributes or deserialized stream values."""
+        if not isinstance(attribute, dict):
+            return attribute
+        if "S" in attribute:
+            return attribute["S"]
+        if "N" in attribute:
+            return attribute["N"]
+        if "BOOL" in attribute:
+            return attribute["BOOL"]
+        if "NULL" in attribute:
+            return None
+        return attribute
+
     @classmethod
     def from_dynamodb_item(cls, item: dict[str, Any]) -> OutboxEvent:
         """Create from DynamoDB item format."""
+        payload = cls._dynamodb_value(item["payload"])
         return cls(
-            event_id=item["eventId"]["S"],
-            event_type=OutboxEventType(item["eventType"]["S"]),
-            aggregate_id=item["aggregateId"]["S"],
-            aggregate_type=item.get("aggregateType", {}).get("S", "FileProcessing"),
-            payload=json.loads(item["payload"]["S"]),
-            status=OutboxStatus(item["status"]["S"]),
-            created_at=item["createdAt"]["S"],
-            published_at=item.get("publishedAt", {}).get("S"),
-            retry_count=int(item.get("retryCount", {}).get("N", "0")),
-            last_error=item.get("lastError", {}).get("S"),
-            message_group_id=item.get("messageGroupId", {}).get("S"),
-            ttl=int(item["ttl"]["N"]) if "ttl" in item else None,
+            event_id=str(cls._dynamodb_value(item["eventId"])),
+            event_type=OutboxEventType(str(cls._dynamodb_value(item["eventType"]))),
+            aggregate_id=str(cls._dynamodb_value(item["aggregateId"])),
+            aggregate_type=str(cls._dynamodb_value(item.get("aggregateType")) or "FileProcessing"),
+            payload=payload if isinstance(payload, dict) else json.loads(str(payload)),
+            status=OutboxStatus(str(cls._dynamodb_value(item["status"]))),
+            created_at=str(cls._dynamodb_value(item["createdAt"])),
+            published_at=cls._dynamodb_value(item.get("publishedAt")),
+            retry_count=int(cls._dynamodb_value(item.get("retryCount")) or "0"),
+            last_error=cls._dynamodb_value(item.get("lastError")),
+            message_group_id=cls._dynamodb_value(item.get("messageGroupId")),
+            ttl=int(cls._dynamodb_value(item["ttl"])) if "ttl" in item else None,
         )
 
     @classmethod
@@ -445,9 +464,9 @@ class OutboxEvent:
     def mark_published(self) -> OutboxEvent:
         """Mark event as published (returns new instance for immutability in tests)."""
         self.status = OutboxStatus.PUBLISHED
-        self.published_at = datetime.utcnow().isoformat()
+        self.published_at = datetime.now(UTC).isoformat()
         # Set TTL to 24 hours from now for cleanup
-        self.ttl = int(datetime.utcnow().timestamp()) + 86400
+        self.ttl = int(datetime.now(UTC).timestamp()) + 86400
         return self
 
     def mark_failed(self, error: str) -> OutboxEvent:

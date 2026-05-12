@@ -6,7 +6,7 @@ DynamoDB implementation of the MetadataRepository port.
 Stores file metadata with single-table design.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -65,7 +65,7 @@ class DynamoDBMetadataRepository(MetadataRepository):
         log = logger.bind(file_id=record.file_id, status=record.status)
 
         try:
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(UTC).isoformat()
             record.updated_at = now
             if not record.created_at:
                 record.created_at = now
@@ -189,7 +189,7 @@ class DynamoDBMetadataRepository(MetadataRepository):
             expr_names: dict[str, str] = {"#status": "status"}
             expr_values: dict[str, Any] = {
                 ":status": {"S": status},
-                ":updated": {"S": datetime.utcnow().isoformat()},
+                ":updated": {"S": datetime.now(UTC).isoformat()},
             }
 
             # Also update GSI1PK for status queries
@@ -202,7 +202,7 @@ class DynamoDBMetadataRepository(MetadataRepository):
 
             if status == ProcessingStatus.COMPLETED.value:
                 update_expr += ", processedAt = :processed"
-                expr_values[":processed"] = {"S": datetime.utcnow().isoformat()}
+                expr_values[":processed"] = {"S": datetime.now(UTC).isoformat()}
 
             self._client.update_item(
                 TableName=self._table_name,
@@ -282,7 +282,7 @@ class DynamoDBMetadataRepository(MetadataRepository):
                 UpdateExpression="SET retryCount = retryCount + :inc, updatedAt = :updated",
                 ExpressionAttributeValues={
                     ":inc": {"N": "1"},
-                    ":updated": {"S": datetime.utcnow().isoformat()},
+                    ":updated": {"S": datetime.now(UTC).isoformat()},
                 },
                 ReturnValues="UPDATED_NEW",
             )

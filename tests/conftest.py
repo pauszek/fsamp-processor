@@ -3,7 +3,7 @@
 # =============================================================================
 """
 Shared fixtures for all tests.
-Schema v1.0.0 compliant - FIPS 140-3.
+Schema v1.1.0 compliant - FIPS 140-3.
 """
 
 import os
@@ -26,7 +26,7 @@ from processor.domain.events import (
 )
 
 # =============================================================================
-# Test Constants - Schema v1.0.0
+# Test Constants - Schema v1.1.0
 # =============================================================================
 
 SAMPLE_CHECKSUM_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -190,7 +190,7 @@ def sample_event_id() -> UUID:
 
 @pytest.fixture
 def sample_correlation_id() -> UUID:
-    """Generate a sample correlation ID (UUID per schema v1.0.0)."""
+    """Generate a sample correlation ID (UUID per schema v1.1.0)."""
     return uuid4()
 
 
@@ -216,7 +216,7 @@ def sample_storage_location(test_bucket: str) -> StorageLocation:
 
 @pytest.fixture
 def sample_security_context() -> SecurityContext:
-    """Create sample security context with valid KMS ARN (schema v1.0.0)."""
+    """Create sample security context with valid KMS ARN (schema v1.1.0)."""
     return SecurityContext(
         is_encrypted=True,
         encryption_algorithm="AES/GCM/NoPadding",
@@ -232,9 +232,10 @@ def sample_file_event(
     sample_storage_location: StorageLocation,
     sample_security_context: SecurityContext,
 ) -> FileEvent:
-    """Create a sample file event (schema v1.0.0)."""
+    """Create a sample file event (schema v1.1.0)."""
     return FileEvent(
         schema_version=SCHEMA_VERSION,
+        file_id=sample_event_id,
         event_id=sample_event_id,
         correlation_id=sample_correlation_id,
         timestamp=datetime.now(UTC),
