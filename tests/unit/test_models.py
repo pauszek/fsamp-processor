@@ -3,7 +3,7 @@
 # =============================================================================
 """Tests for domain models and value objects."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -11,6 +11,9 @@ from processor.domain.models import (
     AnalysisResult,
     FileContent,
     MetadataRecord,
+    OutboxEvent,
+    OutboxEventType,
+    OutboxStatus,
     ProcessingResult,
     ProcessingStatus,
 )
@@ -88,6 +91,42 @@ class TestProcessingResult:
 
         assert result.duration_ms == 1500
 
+    def test_duration_is_none_until_completed(self) -> None:
+        """Test duration is not available before completion."""
+        result = ProcessingResult(
+            event_id="1",
+            correlation_id="1",
+            status=ProcessingStatus.IN_PROGRESS,
+            started_at=datetime.now(UTC),
+        )
+
+        assert result.duration_ms is None
+        assert result.is_failure is False
+
+    def test_with_completion_preserves_retry_and_merges_metadata(self) -> None:
+        """Test completion keeps retry count and merges existing metadata."""
+        original = ProcessingResult(
+            event_id="event-1",
+            correlation_id="corr-1",
+            status=ProcessingStatus.RETRYING,
+            started_at=datetime.now(UTC),
+            retry_count=2,
+            metadata={"source": "sqs"},
+        )
+
+        failed = original.with_completion(
+            status=ProcessingStatus.FAILED,
+            error_message="boom",
+            error_code="PROCESSING_FAILED",
+            metadata={"attempt": 3},
+        )
+
+        assert failed.is_failure is True
+        assert failed.retry_count == 2
+        assert failed.error_message == "boom"
+        assert failed.error_code == "PROCESSING_FAILED"
+        assert failed.metadata == {"source": "sqs", "attempt": 3}
+
 
 class TestFileContent:
     """Tests for FileContent value object."""
@@ -144,6 +183,44 @@ class TestMetadataRecord:
         assert item["originalFilename"]["S"] == "test.pdf"
         assert item["fileSizeBytes"]["N"] == "1024"
         assert item["status"]["S"] == "PENDING"
+
+    def test_to_dynamodb_item_includes_optional_fields(self) -> None:
+        """Test optional metadata fields are serialized when present."""
+        record = MetadataRecord(
+            file_id="file-123",
+            timestamp="2026-05-12T00:00:00+00:00",
+            correlation_id="corr-123",
+            original_filename="sample.txt",
+            file_size_bytes=42,
+            mime_type="text/plain",
+            bucket_name="bucket",
+            object_key="object",
+            status=ProcessingStatus.COMPLETED,
+            file_hash="a" * 64,
+            kms_key_id="arn:aws:kms:us-east-1:123456789012:key/abc",
+            is_safe=True,
+            scan_findings=["clean"],
+            created_at="2026-05-12T00:00:00+00:00",
+            updated_at="2026-05-12T00:01:00+00:00",
+            processed_at="2026-05-12T00:02:00+00:00",
+            error_message="previous transient error",
+            error_code="TRANSIENT",
+            ttl=123456,
+        )
+
+        item = record.to_dynamodb_item()
+
+        assert item["mimeType"]["S"] == "text/plain"
+        assert item["fileHash"]["S"] == "a" * 64
+        assert item["kmsKeyId"]["S"].endswith("key/abc")
+        assert item["isSafe"]["BOOL"] is True
+        assert item["scanFindings"]["SS"] == ["clean"]
+        assert item["createdAt"]["S"] == "2026-05-12T00:00:00+00:00"
+        assert item["updatedAt"]["S"] == "2026-05-12T00:01:00+00:00"
+        assert item["processedAt"]["S"] == "2026-05-12T00:02:00+00:00"
+        assert item["errorMessage"]["S"] == "previous transient error"
+        assert item["errorCode"]["S"] == "TRANSIENT"
+        assert item["ttl"]["N"] == "123456"
 
     def test_from_dynamodb_item(self) -> None:
         """Test creation from DynamoDB item format."""
@@ -204,3 +281,146 @@ class TestAnalysisResult:
 
         assert result.is_safe is False
         assert len(result.findings) == 2
+
+
+class TestOutboxEvent:
+    """Tests for outbox event value object."""
+
+    def test_create_defaults_message_group_to_aggregate_id(self) -> None:
+        event = OutboxEvent.create(
+            event_type=OutboxEventType.FILE_PROCESSED,
+            aggregate_id="file-123",
+            payload={"fileId": "file-123"},
+        )
+
+        assert event.status == OutboxStatus.PENDING
+        assert event.message_group_id == "file-123"
+
+    def test_file_failed_factory(self) -> None:
+        event = OutboxEvent.for_file_failed(
+            file_id="file-123",
+            correlation_id="corr-123",
+            error_code="SCAN_FAILED",
+            error_message="scanner unavailable",
+        )
+
+        assert event.event_type == OutboxEventType.FILE_FAILED
+        assert event.payload["errorCode"] == "SCAN_FAILED"
+        assert event.payload["errorMessage"] == "scanner unavailable"
+        assert "failedAt" in event.payload
+
+    def test_file_quarantined_factory(self) -> None:
+        event = OutboxEvent.for_file_quarantined(
+            file_id="file-123",
+            correlation_id="corr-123",
+            reason="malware",
+            findings=["signature-match"],
+        )
+
+        assert event.event_type == OutboxEventType.FILE_QUARANTINED
+        assert event.payload["reason"] == "malware"
+        assert event.payload["findings"] == ["signature-match"]
+        assert "quarantinedAt" in event.payload
+
+    def test_to_dynamodb_item_includes_optional_fields(self) -> None:
+        event = OutboxEvent(
+            event_id="event-123",
+            event_type=OutboxEventType.FILE_PROCESSED,
+            aggregate_id="file-123",
+            published_at="2026-05-12T00:00:00+00:00",
+            retry_count=2,
+            last_error="temporary failure",
+            message_group_id="group-1",
+            ttl=123456,
+        )
+
+        item = event.to_dynamodb_item()
+
+        assert item["publishedAt"]["S"] == "2026-05-12T00:00:00+00:00"
+        assert item["lastError"]["S"] == "temporary failure"
+        assert item["messageGroupId"]["S"] == "group-1"
+        assert item["ttl"]["N"] == "123456"
+
+    def test_dynamodb_value_supports_wire_and_deserialized_values(self) -> None:
+        assert OutboxEvent._dynamodb_value({"S": "value"}) == "value"
+        assert OutboxEvent._dynamodb_value({"N": "7"}) == "7"
+        assert OutboxEvent._dynamodb_value({"BOOL": True}) is True
+        assert OutboxEvent._dynamodb_value({"NULL": True}) is None
+        assert OutboxEvent._dynamodb_value({"nested": "value"}) == {"nested": "value"}
+        assert OutboxEvent._dynamodb_value("plain") == "plain"
+
+    def test_from_dynamodb_item_supports_deserialized_stream_image(self) -> None:
+        item = {
+            "eventId": "event-123",
+            "eventType": "FILE_PROCESSED",
+            "aggregateId": "file-123",
+            "payload": {"fileId": "file-123"},
+            "status": "PENDING",
+            "createdAt": "2026-05-12T00:00:00+00:00",
+            "retryCount": 2,
+            "publishedAt": "2026-05-12T01:00:00+00:00",
+            "lastError": "previous failure",
+            "messageGroupId": "group-1",
+            "ttl": "123456",
+        }
+
+        event = OutboxEvent.from_dynamodb_item(item)
+
+        assert event.event_id == "event-123"
+        assert event.aggregate_type == "FileProcessing"
+        assert event.payload == {"fileId": "file-123"}
+        assert event.status == OutboxStatus.PENDING
+        assert event.retry_count == 2
+        assert event.ttl == 123456
+
+    def test_from_dynamodb_stream_record_requires_new_image(self) -> None:
+        with pytest.raises(ValueError, match="No NewImage"):
+            OutboxEvent.from_dynamodb_stream_record({"dynamodb": {}})
+
+    def test_from_dynamodb_stream_record_reads_new_image(self) -> None:
+        item = OutboxEvent.create(
+            event_type=OutboxEventType.FILE_PROCESSED,
+            aggregate_id="file-123",
+            payload={"fileId": "file-123"},
+        ).to_dynamodb_item()
+
+        event = OutboxEvent.from_dynamodb_stream_record({"dynamodb": {"NewImage": item}})
+
+        assert event.aggregate_id == "file-123"
+
+    def test_mark_published_and_failed_update_status_fields(self) -> None:
+        event = OutboxEvent.create(
+            event_type=OutboxEventType.FILE_PROCESSED,
+            aggregate_id="file-123",
+            payload={},
+        )
+
+        assert event.mark_published() is event
+        assert event.status == OutboxStatus.PUBLISHED
+        assert event.published_at is not None
+        assert event.ttl is not None
+
+        assert event.mark_failed("sns down") is event
+        assert event.status == OutboxStatus.FAILED
+        assert event.last_error == "sns down"
+        assert event.retry_count == 1
+
+    def test_sns_message_and_attributes(self) -> None:
+        event = OutboxEvent(
+            event_id="event-123",
+            event_type=OutboxEventType.FILE_PROCESSED,
+            aggregate_id="file-123",
+            aggregate_type="FileProcessing",
+            payload={"fileId": "file-123"},
+            created_at="2026-05-12T00:00:00+00:00",
+        )
+
+        assert event.to_sns_message() == {
+            "eventId": "event-123",
+            "eventType": "FILE_PROCESSED",
+            "aggregateId": "file-123",
+            "aggregateType": "FileProcessing",
+            "payload": {"fileId": "file-123"},
+            "timestamp": "2026-05-12T00:00:00+00:00",
+        }
+        assert event.to_sns_attributes()["aggregateId"]["StringValue"] == "file-123"

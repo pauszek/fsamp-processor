@@ -98,6 +98,14 @@ FIPSCONF
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+RUN python - <<'PY'
+import urllib3
+
+urllib3_version = tuple(int(part) for part in urllib3.__version__.split(".")[:3])
+if urllib3_version < (2, 7, 0):
+    raise SystemExit(f"urllib3 {urllib3.__version__} is below the required security baseline 2.7.0")
+PY
+
 # Set working directory
 WORKDIR /app
 

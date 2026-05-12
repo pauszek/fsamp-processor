@@ -59,6 +59,32 @@ class TestOutboxPublisherHelpers:
         assert client1 is client2
         mock_factory.get_dynamodb_client.assert_called_once()
 
+    def test_get_aws_factory_initializes_with_settings_and_enforces_fips(self) -> None:
+        """Test AWS factory initialization uses settings and enforces FIPS policy."""
+        from processor import outbox_publisher
+
+        settings = MagicMock(
+            should_require_fips=True,
+            aws_region="us-east-1",
+            aws_endpoint_url=None,
+            should_use_fips=True,
+        )
+
+        with (
+            patch.object(outbox_publisher, "get_settings", return_value=settings),
+            patch.object(outbox_publisher, "enforce_fips") as enforce_fips,
+            patch.object(outbox_publisher, "AWSClientFactory") as aws_client_factory,
+        ):
+            factory = outbox_publisher.get_aws_factory()
+
+        assert factory is aws_client_factory.return_value
+        enforce_fips.assert_called_once_with(True)
+        aws_client_factory.assert_called_once_with(
+            region="us-east-1",
+            endpoint_url=None,
+            use_fips=True,
+        )
+
 
 class TestOutboxPublisherRecordHandlerLogic:
     """Tests for record_handler logic - simplified without AWS decorators."""
@@ -138,6 +164,105 @@ class TestOutboxPublisherRecordHandlerLogic:
         publish_to_sns.assert_called_once()
         mark_event_published.assert_called_once()
 
+    def test_record_handler_skips_non_pending_wire_status(self) -> None:
+        """Test record handler skips non-pending events in DynamoDB wire format."""
+        from processor import outbox_publisher
+
+        record = MagicMock()
+        record.event_name = "INSERT"
+        record.event_id = "stream-event-1"
+        record.dynamodb.new_image = {"status": {"S": OutboxStatus.PUBLISHED.value}}
+
+        result = outbox_publisher.record_handler(record)
+
+        assert result == {
+            "status": "skipped",
+            "reason": "not_pending",
+            "event_status": OutboxStatus.PUBLISHED.value,
+        }
+
+    def test_record_handler_marks_wire_event_failed_when_publish_fails(self) -> None:
+        """Test failed publishes mark the outbox item failed using deserialized keys."""
+        from processor import outbox_publisher
+
+        outbox_event = OutboxEvent.for_file_processed(
+            file_id="file-123",
+            correlation_id="corr-123",
+            file_hash="a" * 64,
+            is_safe=True,
+            bucket_name="bucket",
+            object_key="object",
+        )
+        record = MagicMock()
+        record.event_name = "INSERT"
+        record.event_id = "stream-event-1"
+        record.dynamodb.new_image = outbox_event.to_dynamodb_item()
+
+        with (
+            patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
+            patch.object(outbox_publisher, "mark_event_failed") as mark_event_failed,
+            pytest.raises(RuntimeError, match="SNS down"),
+        ):
+            outbox_publisher.record_handler(record)
+
+        mark_event_failed.assert_called_once_with(
+            outbox_event.event_id,
+            "SNS down",
+            aggregate_type="FileProcessing",
+        )
+
+    def test_record_handler_suppresses_mark_failed_errors(self) -> None:
+        """Test original publish failure is raised even if failure marking also fails."""
+        from processor import outbox_publisher
+
+        outbox_event = OutboxEvent.for_file_processed(
+            file_id="file-123",
+            correlation_id="corr-123",
+            file_hash="a" * 64,
+            is_safe=True,
+            bucket_name="bucket",
+            object_key="object",
+        )
+        record = MagicMock()
+        record.event_name = "INSERT"
+        record.event_id = "stream-event-1"
+        record.dynamodb.new_image = outbox_event.to_dynamodb_item()
+
+        with (
+            patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
+            patch.object(
+                outbox_publisher,
+                "mark_event_failed",
+                side_effect=RuntimeError("DynamoDB down"),
+            ),
+            pytest.raises(RuntimeError, match="SNS down"),
+        ):
+            outbox_publisher.record_handler(record)
+
+    def test_record_handler_raises_original_error_without_event_id(self) -> None:
+        """Test publish failures without eventId skip failure marking."""
+        from processor import outbox_publisher
+
+        record = MagicMock()
+        record.event_name = "INSERT"
+        record.event_id = "stream-event-1"
+        record.dynamodb.new_image = {
+            "eventType": {"S": "FILE_PROCESSED"},
+            "aggregateId": {"S": "file-123"},
+            "payload": {"S": "{}"},
+            "status": {"S": OutboxStatus.PENDING.value},
+            "createdAt": {"S": "2026-05-12T00:00:00+00:00"},
+        }
+
+        with (
+            patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
+            patch.object(outbox_publisher, "mark_event_failed") as mark_event_failed,
+            pytest.raises(KeyError),
+        ):
+            outbox_publisher.record_handler(record)
+
+        mark_event_failed.assert_not_called()
+
 
 class TestOutboxPublisherPublishToSNS:
     """Tests for publish_to_sns function."""
@@ -200,6 +325,29 @@ class TestOutboxPublisherPublishToSNS:
         assert message_attributes["fileId"]["StringValue"] == "file-123"
         assert message_attributes["correlationId"]["StringValue"] == "corr-123"
 
+    def test_publish_to_sns_wraps_plain_payload_in_outbox_envelope(self) -> None:
+        """Test plain payloads are wrapped in the standard outbox message."""
+        from processor import outbox_publisher
+
+        mock_sns = MagicMock()
+        mock_sns.publish.return_value = {"MessageId": "test-message-id"}
+
+        outbox_event = OutboxEvent(
+            event_id="test-event-id",
+            event_type=OutboxEventType.FILE_PROCESSED,
+            aggregate_id="file-123",
+            aggregate_type="FileProcessing",
+            payload={"fileId": "file-123"},
+            created_at="2026-05-12T00:00:00+00:00",
+        )
+
+        with patch.object(outbox_publisher, "get_sns_client", return_value=mock_sns):
+            outbox_publisher.publish_to_sns(outbox_event)
+
+        message = mock_sns.publish.call_args.kwargs["Message"]
+        assert '"eventId": "test-event-id"' in message
+        assert '"payload": {"fileId": "file-123"}' in message
+
 
 class TestOutboxPublisherMarkEventPublished:
     """Tests for mark_event_published function."""
@@ -217,6 +365,7 @@ class TestOutboxPublisherMarkEventPublished:
         """Test marking event as published."""
         from processor import outbox_publisher
 
+        outbox_publisher._settings = None
         mock_dynamodb = MagicMock()
 
         outbox_event = OutboxEvent(
@@ -251,6 +400,7 @@ class TestOutboxPublisherMarkEventFailed:
         """Test marking event as failed."""
         from processor import outbox_publisher
 
+        outbox_publisher._settings = None
         mock_dynamodb = MagicMock()
 
         with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
@@ -264,6 +414,7 @@ class TestOutboxPublisherMarkEventFailed:
         """Test that long error messages are truncated."""
         from processor import outbox_publisher
 
+        outbox_publisher._settings = None
         mock_dynamodb = MagicMock()
         long_error = "x" * 2000
 
@@ -299,6 +450,38 @@ class TestOutboxPublisherLambdaHandler:
 
         # Test OUTBOX_TABLE_NAME is used
         assert os.environ.get("OUTBOX_TABLE_NAME", "") == outbox_publisher.get_outbox_table_name()
+
+    def test_lambda_handler_rejects_missing_sns_topic(self) -> None:
+        """Test lambda handler fails closed when topic ARN is missing."""
+        from processor import outbox_publisher
+
+        os.environ["SNS_TOPIC_ARN"] = ""
+
+        with pytest.raises(ValueError, match="SNS_TOPIC_ARN"):
+            outbox_publisher.lambda_handler({"Records": []}, MagicMock())
+
+    def test_lambda_handler_rejects_missing_outbox_table(self) -> None:
+        """Test lambda handler fails closed when outbox table is missing."""
+        from processor import outbox_publisher
+
+        os.environ["OUTBOX_TABLE_NAME"] = ""
+
+        with pytest.raises(ValueError, match="OUTBOX_TABLE_NAME"):
+            outbox_publisher.lambda_handler({"Records": []}, MagicMock())
+
+    def test_lambda_handler_delegates_to_batch_processor(self) -> None:
+        """Test lambda handler returns batch processor response."""
+        from processor import outbox_publisher
+
+        with patch.object(
+            outbox_publisher,
+            "process_partial_response",
+            return_value={"batchItemFailures": []},
+        ) as process_partial_response:
+            result = outbox_publisher.lambda_handler({"Records": []}, MagicMock())
+
+        assert result == {"batchItemFailures": []}
+        process_partial_response.assert_called_once()
 
     def test_lambda_handler_constants(self) -> None:
         """Test lambda handler constants are set."""
@@ -354,3 +537,63 @@ class TestOutboxPublisherRetryHandler:
 
         assert result["statusCode"] == 200
         assert result["body"]["total_processed"] == 0
+
+    def test_retry_handler_republishes_failed_events(self) -> None:
+        """Test retry handler resets, republishes, and marks failed events published."""
+        from processor import outbox_publisher
+
+        outbox_event = OutboxEvent.for_file_processed(
+            file_id="file-123",
+            correlation_id="corr-123",
+            file_hash="a" * 64,
+            is_safe=True,
+            bucket_name="bucket",
+            object_key="object",
+        )
+        outbox_event.mark_failed("temporary")
+        mock_dynamodb = MagicMock()
+        mock_dynamodb.query.return_value = {"Items": [outbox_event.to_dynamodb_item()]}
+
+        with (
+            patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb),
+            patch.object(outbox_publisher, "publish_to_sns") as publish_to_sns,
+            patch.object(outbox_publisher, "mark_event_published") as mark_event_published,
+        ):
+            result = outbox_publisher.retry_handler({}, MagicMock())
+
+        assert result["body"] == {
+            "success_count": 1,
+            "failure_count": 0,
+            "total_processed": 1,
+        }
+        mock_dynamodb.update_item.assert_called_once()
+        publish_to_sns.assert_called_once()
+        mark_event_published.assert_called_once()
+
+    def test_retry_handler_counts_failed_retry_attempts(self) -> None:
+        """Test retry handler continues and counts failed retry attempts."""
+        from processor import outbox_publisher
+
+        outbox_event = OutboxEvent.for_file_processed(
+            file_id="file-123",
+            correlation_id="corr-123",
+            file_hash="a" * 64,
+            is_safe=True,
+            bucket_name="bucket",
+            object_key="object",
+        )
+        outbox_event.mark_failed("temporary")
+        mock_dynamodb = MagicMock()
+        mock_dynamodb.query.return_value = {"Items": [outbox_event.to_dynamodb_item()]}
+
+        with (
+            patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb),
+            patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
+        ):
+            result = outbox_publisher.retry_handler({}, MagicMock())
+
+        assert result["body"] == {
+            "success_count": 0,
+            "failure_count": 1,
+            "total_processed": 1,
+        }

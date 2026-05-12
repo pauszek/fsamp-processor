@@ -205,10 +205,12 @@ def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
 
         # Try to mark as failed
         try:
-            dynamo_event_id = new_image.get("eventId")
+            dynamo_event_id = OutboxEvent._dynamodb_value(new_image.get("eventId"))
             if dynamo_event_id:
-                aggregate_type = new_image.get("aggregateType") or "FileProcessing"
-                mark_event_failed(dynamo_event_id, str(e), aggregate_type=aggregate_type)
+                aggregate_type = (
+                    OutboxEvent._dynamodb_value(new_image.get("aggregateType")) or "FileProcessing"
+                )
+                mark_event_failed(str(dynamo_event_id), str(e), aggregate_type=str(aggregate_type))
         except Exception:
             logger.exception(
                 "Failed to mark event as failed", event_name=event_name, event_id=event_id
