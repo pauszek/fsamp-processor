@@ -28,7 +28,7 @@ pre-commit>=4.0.0
 pip-audit>=2.7.0
 cyclonedx-bom>=4.0.0
 safety>=3.2.0
-bandit>=1.7.0
+bandit>=1.9.4
 
 # LocalStack testing
 localstack-client>=2.6.0
