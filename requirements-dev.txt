@@ -34,4 +34,4 @@ bandit>=1.7.0
 localstack-client>=2.6.0
 
 # Integration testing with Testcontainers
-testcontainers[localstack]>=4.8.0
+testcontainers[localstack]>=4.14.2
