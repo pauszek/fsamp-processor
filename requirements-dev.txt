@@ -18,7 +18,7 @@ boto3-stubs[s3,sqs,dynamodb,kms]>=1.35.0
 
 # Linting & Formatting
 ruff>=0.7.0
-black>=24.10.0
+black>=26.5.0
 isort>=5.13.0
 
 # Pre-commit hooks
