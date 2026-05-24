@@ -1,7 +1,3 @@
-# =============================================================================
-# CI/CD Parameters for fsamp-processor
-# =============================================================================
-# Configuration used by reusable workflows from fsamp-code-ci
 
 ci:
   python-version: "3.14"
