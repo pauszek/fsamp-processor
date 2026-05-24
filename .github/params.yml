@@ -14,6 +14,9 @@ release:
   full-release: true
   publish: true
 
+deploy:
+  auto-dev: false
+
 docker:
   enabled: true
   image-name: fsamp-processor
