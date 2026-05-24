@@ -1,6 +1,3 @@
-# =============================================================================
-# Ports Layer
-# =============================================================================
 """
 Ports define the interfaces (contracts) between the domain and external world.
 Following Hexagonal Architecture (Ports & Adapters) pattern.

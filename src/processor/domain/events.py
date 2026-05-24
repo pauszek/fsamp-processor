@@ -1,6 +1,3 @@
-# =============================================================================
-# Domain Events - Pydantic Models (Schema v1.1.0)
-# =============================================================================
 """
 Event models matching the FSAMP event.schema.json specification v1.1.0.
 These are the core domain events flowing through the system.
@@ -20,7 +17,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Schema version for forward compatibility
 SCHEMA_VERSION = "1.1.0"
 
 
@@ -152,7 +148,7 @@ class SecurityContext(BaseModel):
     kms_key_id: Annotated[
         str,
         Field(
-            pattern=r"^arn:aws:kms:[a-z0-9-]+:\d{12}:key/[a-f0-9-]{36}$",
+            pattern=r"^arn:(aws|aws-us-gov):kms:[a-z0-9-]+:\d{12}:key/[a-f0-9-]{36}$",
             alias="kmsKeyId",
             description="ARN of the AWS KMS key for envelope encryption",
         ),
@@ -239,16 +235,9 @@ class FileEvent(BaseModel):
         SecurityContext,
         Field(
             alias="securityContext",
-            description="Cryptographic metadata required for FIPS 140-3 compliance",
+            description="Cryptographic metadata required for the FIPS 140-3-oriented posture",
         ),
     ]
-
-    # =========================================================================
-    # Serialization Helpers (UUID → string at boundary)
-    # =========================================================================
-    # These properties provide string representations for use at serialization
-    # boundaries (DynamoDB, SNS attributes, logging) while keeping the domain
-    # model type-safe with UUID.
 
     @property
     def event_id_str(self) -> str:
@@ -301,12 +290,9 @@ class SQSMessageWrapper(BaseModel):
 
         body_data = orjson.loads(self.body)
 
-        # Check if this is an SNS notification wrapper
         if "Type" in body_data and body_data.get("Type") == "Notification":
-            # SNS wraps the actual message in 'Message' field as JSON string
             event_data = orjson.loads(body_data["Message"])
         else:
-            # Direct event (for testing or direct SQS publishing)
             event_data = body_data
 
         return FileEvent.model_validate(event_data)

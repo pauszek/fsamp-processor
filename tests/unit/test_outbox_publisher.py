@@ -1,8 +1,3 @@
-# =============================================================================
-# Unit Tests for Outbox Publisher Lambda
-# =============================================================================
-"""Tests for Outbox Publisher Lambda handler."""
-
 import os
 from unittest.mock import MagicMock, patch
 
@@ -12,11 +7,8 @@ from processor.domain.models import OutboxEvent, OutboxEventType, OutboxStatus
 
 
 class TestOutboxPublisherHelpers:
-    """Tests for outbox publisher helper functions."""
-
     @pytest.fixture(autouse=True)
     def setup_env(self) -> None:
-        """Set up environment variables."""
         os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
         os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
         from processor import outbox_publisher
@@ -30,7 +22,6 @@ class TestOutboxPublisherHelpers:
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_get_sns_client_singleton(self) -> None:
-        """Test that SNS client is reused."""
         from processor import outbox_publisher
 
         mock_client = MagicMock()
@@ -45,7 +36,6 @@ class TestOutboxPublisherHelpers:
         mock_factory.get_sns_client.assert_called_once()
 
     def test_get_dynamodb_client_singleton(self) -> None:
-        """Test that DynamoDB client is reused."""
         from processor import outbox_publisher
 
         mock_client = MagicMock()
@@ -60,7 +50,6 @@ class TestOutboxPublisherHelpers:
         mock_factory.get_dynamodb_client.assert_called_once()
 
     def test_get_aws_factory_initializes_with_settings_and_enforces_fips(self) -> None:
-        """Test AWS factory initialization uses settings and enforces FIPS policy."""
         from processor import outbox_publisher
 
         settings = MagicMock(
@@ -87,16 +76,11 @@ class TestOutboxPublisherHelpers:
 
 
 class TestOutboxPublisherRecordHandlerLogic:
-    """Tests for record_handler logic - simplified without AWS decorators."""
-
     def test_non_insert_event_should_be_skipped(self) -> None:
-        """Test that non-INSERT events should be skipped."""
-        # This tests the logic directly without AWS decorators
         event_name = "MODIFY"
         assert event_name != "INSERT"
 
     def test_pending_status_detection(self) -> None:
-        """Test PENDING status detection."""
         new_image = {"status": OutboxStatus.PENDING.value}
         assert new_image.get("status") == OutboxStatus.PENDING.value
 
@@ -104,12 +88,10 @@ class TestOutboxPublisherRecordHandlerLogic:
         assert new_image.get("status") != OutboxStatus.PENDING.value
 
     def test_no_new_image_should_be_skipped(self) -> None:
-        """Test that missing new_image should be skipped."""
         new_image = None
         assert not new_image
 
     def test_record_handler_skips_non_insert_event(self) -> None:
-        """Test record handler skips DynamoDB stream events other than INSERT."""
         from processor import outbox_publisher
 
         record = MagicMock()
@@ -121,7 +103,6 @@ class TestOutboxPublisherRecordHandlerLogic:
         assert result == {"status": "skipped", "reason": "not_insert"}
 
     def test_record_handler_skips_missing_new_image(self) -> None:
-        """Test record handler skips INSERT events without a new image."""
         from processor import outbox_publisher
 
         record = MagicMock()
@@ -134,7 +115,6 @@ class TestOutboxPublisherRecordHandlerLogic:
         assert result == {"status": "skipped", "reason": "no_new_image"}
 
     def test_record_handler_publishes_pending_event(self) -> None:
-        """Test record handler publishes pending outbox events."""
         from processor import outbox_publisher
 
         outbox_event = OutboxEvent.for_file_processed(
@@ -165,7 +145,6 @@ class TestOutboxPublisherRecordHandlerLogic:
         mark_event_published.assert_called_once()
 
     def test_record_handler_skips_non_pending_wire_status(self) -> None:
-        """Test record handler skips non-pending events in DynamoDB wire format."""
         from processor import outbox_publisher
 
         record = MagicMock()
@@ -182,7 +161,6 @@ class TestOutboxPublisherRecordHandlerLogic:
         }
 
     def test_record_handler_marks_wire_event_failed_when_publish_fails(self) -> None:
-        """Test failed publishes mark the outbox item failed using deserialized keys."""
         from processor import outbox_publisher
 
         outbox_event = OutboxEvent.for_file_processed(
@@ -212,7 +190,6 @@ class TestOutboxPublisherRecordHandlerLogic:
         )
 
     def test_record_handler_suppresses_mark_failed_errors(self) -> None:
-        """Test original publish failure is raised even if failure marking also fails."""
         from processor import outbox_publisher
 
         outbox_event = OutboxEvent.for_file_processed(
@@ -240,7 +217,6 @@ class TestOutboxPublisherRecordHandlerLogic:
             outbox_publisher.record_handler(record)
 
     def test_record_handler_raises_original_error_without_event_id(self) -> None:
-        """Test publish failures without eventId skip failure marking."""
         from processor import outbox_publisher
 
         record = MagicMock()
@@ -265,11 +241,8 @@ class TestOutboxPublisherRecordHandlerLogic:
 
 
 class TestOutboxPublisherPublishToSNS:
-    """Tests for publish_to_sns function."""
-
     @pytest.fixture(autouse=True)
     def setup_env(self) -> None:
-        """Set up environment variables."""
         os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
         os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
         yield
@@ -277,7 +250,6 @@ class TestOutboxPublisherPublishToSNS:
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_publish_to_sns_success(self) -> None:
-        """Test successful SNS publishing."""
         from processor import outbox_publisher
 
         mock_sns = MagicMock()
@@ -298,7 +270,6 @@ class TestOutboxPublisherPublishToSNS:
         mock_sns.publish.assert_called_once()
 
     def test_publish_to_sns_adds_file_context_attributes(self) -> None:
-        """Test SNS publishing includes file context attributes for filtering."""
         from processor import outbox_publisher
 
         mock_sns = MagicMock()
@@ -326,7 +297,6 @@ class TestOutboxPublisherPublishToSNS:
         assert message_attributes["correlationId"]["StringValue"] == "corr-123"
 
     def test_publish_to_sns_wraps_plain_payload_in_outbox_envelope(self) -> None:
-        """Test plain payloads are wrapped in the standard outbox message."""
         from processor import outbox_publisher
 
         mock_sns = MagicMock()
@@ -350,11 +320,8 @@ class TestOutboxPublisherPublishToSNS:
 
 
 class TestOutboxPublisherMarkEventPublished:
-    """Tests for mark_event_published function."""
-
     @pytest.fixture(autouse=True)
     def setup_env(self) -> None:
-        """Set up environment variables."""
         os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
         os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
         yield
@@ -362,7 +329,6 @@ class TestOutboxPublisherMarkEventPublished:
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_mark_event_published(self) -> None:
-        """Test marking event as published."""
         from processor import outbox_publisher
 
         outbox_publisher._settings = None
@@ -385,11 +351,8 @@ class TestOutboxPublisherMarkEventPublished:
 
 
 class TestOutboxPublisherMarkEventFailed:
-    """Tests for mark_event_failed function."""
-
     @pytest.fixture(autouse=True)
     def setup_env(self) -> None:
-        """Set up environment variables."""
         os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
         os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
         yield
@@ -397,7 +360,6 @@ class TestOutboxPublisherMarkEventFailed:
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_mark_event_failed(self) -> None:
-        """Test marking event as failed."""
         from processor import outbox_publisher
 
         outbox_publisher._settings = None
@@ -411,7 +373,6 @@ class TestOutboxPublisherMarkEventFailed:
         assert ":error" in call_kwargs["ExpressionAttributeValues"]
 
     def test_mark_event_failed_truncates_long_error(self) -> None:
-        """Test that long error messages are truncated."""
         from processor import outbox_publisher
 
         outbox_publisher._settings = None
@@ -427,11 +388,8 @@ class TestOutboxPublisherMarkEventFailed:
 
 
 class TestOutboxPublisherLambdaHandler:
-    """Tests for lambda_handler function."""
-
     @pytest.fixture(autouse=True)
     def setup_env(self) -> None:
-        """Set up environment variables."""
         os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
         os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
         os.environ["POWERTOOLS_SERVICE_NAME"] = "outbox-publisher"
@@ -441,18 +399,14 @@ class TestOutboxPublisherLambdaHandler:
         os.environ.pop("POWERTOOLS_SERVICE_NAME", None)
 
     def test_lambda_handler_env_validation(self) -> None:
-        """Test lambda handler validates environment variables."""
         from processor import outbox_publisher
 
-        # Test SNS_TOPIC_ARN is used
         outbox_publisher._settings = None
         assert os.environ.get("SNS_TOPIC_ARN", "") == outbox_publisher.get_sns_topic_arn()
 
-        # Test OUTBOX_TABLE_NAME is used
         assert os.environ.get("OUTBOX_TABLE_NAME", "") == outbox_publisher.get_outbox_table_name()
 
     def test_lambda_handler_rejects_missing_sns_topic(self) -> None:
-        """Test lambda handler fails closed when topic ARN is missing."""
         from processor import outbox_publisher
 
         os.environ["SNS_TOPIC_ARN"] = ""
@@ -461,7 +415,6 @@ class TestOutboxPublisherLambdaHandler:
             outbox_publisher.lambda_handler({"Records": []}, MagicMock())
 
     def test_lambda_handler_rejects_missing_outbox_table(self) -> None:
-        """Test lambda handler fails closed when outbox table is missing."""
         from processor import outbox_publisher
 
         os.environ["OUTBOX_TABLE_NAME"] = ""
@@ -470,7 +423,6 @@ class TestOutboxPublisherLambdaHandler:
             outbox_publisher.lambda_handler({"Records": []}, MagicMock())
 
     def test_lambda_handler_delegates_to_batch_processor(self) -> None:
-        """Test lambda handler returns batch processor response."""
         from processor import outbox_publisher
 
         with patch.object(
@@ -484,14 +436,11 @@ class TestOutboxPublisherLambdaHandler:
         process_partial_response.assert_called_once()
 
     def test_lambda_handler_constants(self) -> None:
-        """Test lambda handler constants are set."""
         from processor import outbox_publisher
 
-        # MAX_RETRY_COUNT should have a default
         assert outbox_publisher.MAX_RETRY_COUNT >= 0
 
     def test_settings_values_take_precedence_over_environment(self) -> None:
-        """Test resolved settings override fallback environment values."""
         from processor import outbox_publisher
 
         outbox_publisher._settings = MagicMock(
@@ -507,11 +456,8 @@ class TestOutboxPublisherLambdaHandler:
 
 
 class TestOutboxPublisherRetryHandler:
-    """Tests for retry_handler function."""
-
     @pytest.fixture(autouse=True)
     def setup_env(self) -> None:
-        """Set up environment variables."""
         os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
         os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
         os.environ["POWERTOOLS_SERVICE_NAME"] = "outbox-publisher"
@@ -523,7 +469,6 @@ class TestOutboxPublisherRetryHandler:
         os.environ.pop("MAX_RETRY_COUNT", None)
 
     def test_retry_handler_no_failed_events(self) -> None:
-        """Test retry handler with no failed events."""
         from processor import outbox_publisher
 
         mock_dynamodb = MagicMock()
@@ -539,7 +484,6 @@ class TestOutboxPublisherRetryHandler:
         assert result["body"]["total_processed"] == 0
 
     def test_retry_handler_republishes_failed_events(self) -> None:
-        """Test retry handler resets, republishes, and marks failed events published."""
         from processor import outbox_publisher
 
         outbox_event = OutboxEvent.for_file_processed(
@@ -571,7 +515,6 @@ class TestOutboxPublisherRetryHandler:
         mark_event_published.assert_called_once()
 
     def test_retry_handler_counts_failed_retry_attempts(self) -> None:
-        """Test retry handler continues and counts failed retry attempts."""
         from processor import outbox_publisher
 
         outbox_event = OutboxEvent.for_file_processed(

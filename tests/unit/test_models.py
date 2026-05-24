@@ -1,8 +1,3 @@
-# =============================================================================
-# Unit Tests for Domain Models
-# =============================================================================
-"""Tests for domain models and value objects."""
-
 from datetime import UTC, datetime
 
 import pytest
@@ -20,10 +15,7 @@ from processor.domain.models import (
 
 
 class TestProcessingResult:
-    """Tests for ProcessingResult value object."""
-
     def test_create_result(self) -> None:
-        """Test creating a processing result."""
         result = ProcessingResult(
             event_id="event-123",
             correlation_id="corr-456",
@@ -36,7 +28,6 @@ class TestProcessingResult:
         assert result.completed_at is None
 
     def test_is_success(self) -> None:
-        """Test is_success property."""
         success = ProcessingResult(
             event_id="1",
             correlation_id="1",
@@ -54,7 +45,6 @@ class TestProcessingResult:
         assert failed.is_success is False
 
     def test_with_completion(self) -> None:
-        """Test immutable completion update."""
         original = ProcessingResult(
             event_id="event-1",
             correlation_id="corr-1",
@@ -67,17 +57,14 @@ class TestProcessingResult:
             metadata={"key": "value"},
         )
 
-        # Original unchanged
         assert original.status == ProcessingStatus.IN_PROGRESS
         assert original.completed_at is None
 
-        # New object updated
         assert completed.status == ProcessingStatus.COMPLETED
         assert completed.completed_at is not None
         assert completed.metadata["key"] == "value"
 
     def test_duration_calculation(self) -> None:
-        """Test duration calculation."""
         started = datetime(2024, 1, 1, 12, 0, 0)
         completed = datetime(2024, 1, 1, 12, 0, 1, 500000)  # 1.5 seconds later
 
@@ -92,7 +79,6 @@ class TestProcessingResult:
         assert result.duration_ms == 1500
 
     def test_duration_is_none_until_completed(self) -> None:
-        """Test duration is not available before completion."""
         result = ProcessingResult(
             event_id="1",
             correlation_id="1",
@@ -104,7 +90,6 @@ class TestProcessingResult:
         assert result.is_failure is False
 
     def test_with_completion_preserves_retry_and_merges_metadata(self) -> None:
-        """Test completion keeps retry count and merges existing metadata."""
         original = ProcessingResult(
             event_id="event-1",
             correlation_id="corr-1",
@@ -129,10 +114,7 @@ class TestProcessingResult:
 
 
 class TestFileContent:
-    """Tests for FileContent value object."""
-
     def test_create_content(self) -> None:
-        """Test creating file content."""
         content = FileContent(
             data=b"test content",
             content_type="text/plain",
@@ -145,7 +127,6 @@ class TestFileContent:
         assert content.is_encrypted is False
 
     def test_encrypted_content(self) -> None:
-        """Test encrypted content detection."""
         content = FileContent(
             data=b"encrypted",
             encryption_algorithm="aws:kms",
@@ -156,11 +137,8 @@ class TestFileContent:
 
 
 class TestMetadataRecord:
-    """Tests for MetadataRecord."""
-
     @pytest.fixture
     def sample_record(self) -> MetadataRecord:
-        """Create sample metadata record."""
         return MetadataRecord(
             file_id="file-123",
             timestamp="2024-01-01T12:00:00Z",
@@ -174,7 +152,6 @@ class TestMetadataRecord:
         )
 
     def test_to_dynamodb_item(self, sample_record: MetadataRecord) -> None:
-        """Test conversion to DynamoDB item format."""
         item = sample_record.to_dynamodb_item()
 
         assert item["PK"]["S"] == "FILE#file-123"
@@ -185,7 +162,6 @@ class TestMetadataRecord:
         assert item["status"]["S"] == "PENDING"
 
     def test_to_dynamodb_item_includes_optional_fields(self) -> None:
-        """Test optional metadata fields are serialized when present."""
         record = MetadataRecord(
             file_id="file-123",
             timestamp="2026-05-12T00:00:00+00:00",
@@ -223,7 +199,6 @@ class TestMetadataRecord:
         assert item["ttl"]["N"] == "123456"
 
     def test_from_dynamodb_item(self) -> None:
-        """Test creation from DynamoDB item format."""
         item = {
             "PK": {"S": "FILE#file-abc"},
             "SK": {"S": "TS#2024-06-15T10:30:00Z"},
@@ -247,7 +222,6 @@ class TestMetadataRecord:
         assert record.retry_count == 2
 
     def test_roundtrip_conversion(self, sample_record: MetadataRecord) -> None:
-        """Test roundtrip DynamoDB conversion."""
         item = sample_record.to_dynamodb_item()
         restored = MetadataRecord.from_dynamodb_item(item)
 
@@ -257,10 +231,7 @@ class TestMetadataRecord:
 
 
 class TestAnalysisResult:
-    """Tests for AnalysisResult value object."""
-
     def test_create_safe_result(self) -> None:
-        """Test creating safe analysis result."""
         result = AnalysisResult(
             file_hash_sha256="abc123def456",
             is_safe=True,
@@ -271,7 +242,6 @@ class TestAnalysisResult:
         assert result.findings == []
 
     def test_create_unsafe_result(self) -> None:
-        """Test creating unsafe analysis result with findings."""
         result = AnalysisResult(
             file_hash_sha256="xyz789",
             is_safe=False,
@@ -284,8 +254,6 @@ class TestAnalysisResult:
 
 
 class TestOutboxEvent:
-    """Tests for outbox event value object."""
-
     def test_create_defaults_message_group_to_aggregate_id(self) -> None:
         event = OutboxEvent.create(
             event_type=OutboxEventType.FILE_PROCESSED,

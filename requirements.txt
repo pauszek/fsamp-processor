@@ -1,31 +1,20 @@
-# =============================================================================
-# FSAMP Processor - Production Dependencies
-# =============================================================================
-# Generated from pyproject.toml - use `pip install -e .` for development
-# =============================================================================
-
-# AWS SDK
+# Runtime dependencies
 boto3>=1.42.0
 botocore>=1.42.0
 
 # Force urllib3 upgrade for current high-severity proxy/streaming fixes
 urllib3>=2.7.0
 
-# AWS Lambda Powertools
 aws-lambda-powertools[tracer,aws-sdk]>=3.23.0
 
-# Validation & Settings
 pydantic>=2.12.0
 pydantic-settings>=2.12.0
 
-# Cryptography (FIPS 140-3 compliant)
 cryptography>=46.0.0
 
-# Observability
 structlog>=25.5.0
 python-json-logger>=4.0.0
 
-# Utilities
 tenacity>=9.1.0
 python-dateutil>=2.9.0
 orjson>=3.11.0

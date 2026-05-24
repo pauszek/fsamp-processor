@@ -1,6 +1,3 @@
-# =============================================================================
-# Inbound Ports (Driving Adapters)
-# =============================================================================
 """
 Inbound ports define interfaces for external actors to interact with the domain.
 These are implemented by input adapters (e.g., SQS Consumer, HTTP Controller).

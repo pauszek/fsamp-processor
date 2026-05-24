@@ -1,47 +1,9 @@
-# =============================================================================
-# FSAMP Processor - Lambda Container Image
-# =============================================================================
-# Enterprise-grade Lambda container image with a FedRAMP-aligned,
-# FIPS 140-3-oriented OpenSSL runtime posture.
-#
-# Uses the official AWS Lambda base image (AL2023) which includes:
-#   - Lambda Runtime Interface Client (RIC)
-#   - Lambda Runtime Interface Emulator (RIE) for local testing
-#   - glibc, OpenSSL 3.x, CA certificates
-#
-# FIPS strategy:
-#   1. AL2023 OpenSSL FIPS provider activated for `ssl` / `cryptography`
-#   2. boto3 FIPS endpoints (`use_fips_endpoint=True`) for AWS API calls
-#   3. KMS CMK for envelope encryption of environment variables
-#
-# Build:
-#   docker build -f Dockerfile.lambda -t fsamp-processor-lambda .
-#
-# Push to ECR:
-#   aws ecr get-login-password | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
-#   docker tag fsamp-processor-lambda:latest <account>.dkr.ecr.<region>.amazonaws.com/fsamp-<env>-processor:latest
-#   docker push <account>.dkr.ecr.<region>.amazonaws.com/fsamp-<env>-processor:latest
-#
-# Local testing with RIE:
-#   docker build --build-arg INCLUDE_LAMBDA_RIE=true -f Dockerfile.lambda -t fsamp-processor-lambda:local .
-#   docker run -p 9000:8080 fsamp-processor-lambda:local
-#   curl -X POST "http://localhost:9000/2015-03-31/functions/function/invocations" \
-#     -d @events/sample-sqs-event.json
-# =============================================================================
-
-# -----------------------------------------------------------------------------
-# Stage 1: Builder — install dependencies in a venv
-# -----------------------------------------------------------------------------
 FROM public.ecr.aws/lambda/python:3.14 AS builder
 
-# Build cryptography from source against AL2023 system OpenSSL. Prebuilt
-# cryptography wheels bundle their own OpenSSL, which bypasses the runtime
-# FIPS provider configuration.
 ENV OPENSSL_DIR=/usr \
     OPENSSL_NO_VENDOR=1 \
     CRYPTOGRAPHY_OPENSSL_NO_VENDOR=1
 
-# Install build dependencies. Rust/C toolchains stay in this throwaway stage.
 RUN dnf install -y \
         cargo \
         gcc \
@@ -52,7 +14,6 @@ RUN dnf install -y \
         rust && \
     dnf clean all
 
-# Create virtual env for clean dependency isolation
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
@@ -61,35 +22,21 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir --no-binary cryptography -r requirements.txt
 
-# Install the application package itself
 COPY pyproject.toml .
 COPY src/ src/
 RUN pip install --no-cache-dir .
-
-# -----------------------------------------------------------------------------
-# Stage 2: Runtime — minimal Lambda image with FIPS OpenSSL
-# -----------------------------------------------------------------------------
 FROM public.ecr.aws/lambda/python:3.14
 
 ARG OPENSSL_FIPS_PROVIDER=latest
 ARG AL2023_SECURITY_RELEASEVER=latest
 ARG INCLUDE_LAMBDA_RIE=false
 
-# Labels (OCI standard)
 LABEL maintainer="Pauszek <pauszek@github.io>"
 LABEL org.opencontainers.image.title="FSAMP Processor Lambda"
 LABEL org.opencontainers.image.description="Event-driven file processor with AL2023 OpenSSL FIPS provider"
 LABEL org.opencontainers.image.version="0.1.0"
 LABEL org.opencontainers.image.source="https://github.com/pauszek/fsamp-processor"
 
-# Install OpenSSL CLI, the AL2023 FIPS provider, and crypto-policy tooling.
-# The Lambda base image can lag behind patched AL2023 repo content; use
-# AL2023_SECURITY_RELEASEVER for runtime security refreshes, while allowing
-# regulated builds to pin a tested releasever explicitly.
-# AL2023.7+ defaults to openssl-fips-provider-latest for regular security
-# updates. Build with --build-arg OPENSSL_FIPS_PROVIDER=certified when an
-# auditor requires the provider package that matches the NIST certificate
-# checksum instead of the latest patched provider.
 RUN dnf install -y \
         ca-certificates \
         crypto-policies-scripts \
@@ -125,9 +72,6 @@ RUN dnf install -y \
     fi && \
     dnf clean all
 
-# The AWS Lambda Python base image also ships runtime site-packages under
-# /var/lang. Keep those patched too, otherwise image scanners still report
-# vulnerable packages even when the application venv in /opt is clean.
 RUN /var/lang/bin/python -m pip install --no-cache-dir --upgrade "urllib3>=2.7.0" && \
     /var/lang/bin/python - <<'PY'
 import urllib3
@@ -136,17 +80,7 @@ urllib3_version = tuple(int(part) for part in urllib3.__version__.split(".")[:3]
 if urllib3_version < (2, 7, 0):
     raise SystemExit(f"/var/lang urllib3 {urllib3.__version__} is below 2.7.0")
 PY
-
-# ---------------------------------------------------------------------------
-# Configure OpenSSL FIPS provider
-# ---------------------------------------------------------------------------
-# Amazon Linux disables `openssl fipsinstall` in its OpenSSL build. For
-# containers, AWS documents enabling FIPS crypto policies inside the container;
-# this config then forces OpenSSL applications in the image to load the AL2023
-# FIPS provider and to prefer FIPS-approved algorithms.
-# ---------------------------------------------------------------------------
 COPY <<'FIPSCONF' /etc/pki/tls/openssl-fips.cnf
-# OpenSSL configuration - AL2023 FIPS provider activated
 config_diagnostics = 1
 openssl_conf = openssl_init
 
@@ -174,23 +108,17 @@ system_default = crypto_policy
 .include = /etc/crypto-policies/back-ends/opensslcnf.config
 FIPSCONF
 
-# Point OpenSSL at the image-level FIPS config and module path.
 ENV OPENSSL_CONF=/etc/pki/tls/openssl-fips.cnf \
     OPENSSL_MODULES=/usr/lib64/ossl-modules
 
-# Fail the build if FIPS provider activation regresses. SHA-256 must work;
-# MD5 must be rejected when default_properties=fips=yes is active.
 RUN openssl list -providers -verbose \
         | grep -q "Amazon Linux 2023 - OpenSSL FIPS Provider" && \
     openssl dgst -sha256 /etc/os-release >/dev/null && \
     ! openssl dgst -md5 /etc/os-release >/tmp/openssl-md5.out 2>&1
 
-# Copy the venv from the builder stage
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Verify cryptography is dynamically linked to AL2023 libcrypto and sees the
-# FIPS default properties at runtime.
 RUN python - <<'PY'
 from pathlib import Path
 import subprocess
@@ -231,12 +159,7 @@ if not is_fips_enabled():
     raise SystemExit("application FIPS runtime check does not see OpenSSL FIPS mode")
 PY
 
-# Copy application source code into Lambda task root
 COPY src/processor ${LAMBDA_TASK_ROOT}/processor
-
-# ---------------------------------------------------------------------------
-# Environment variables
-# ---------------------------------------------------------------------------
 ENV POWERTOOLS_SERVICE_NAME=fsamp-processor \
     POWERTOOLS_METRICS_NAMESPACE=FSAMP/Processor \
     POWERTOOLS_LOG_LEVEL=INFO \
@@ -246,5 +169,4 @@ ENV POWERTOOLS_SERVICE_NAME=fsamp-processor \
     USE_FIPS_ENDPOINT=true \
     PYTHONUNBUFFERED=1
 
-# Lambda handler — module path relative to LAMBDA_TASK_ROOT
 CMD ["processor.lambda_handler.lambda_handler"]

@@ -1,37 +1,22 @@
-# =============================================================================
-# FSAMP Processor - Development Dependencies
-# =============================================================================
-
 -r requirements.txt
 
-# Testing
-pytest>=8.3.0
-pytest-cov>=5.0.0
-pytest-asyncio>=0.24.0
-pytest-mock>=3.14.0
-moto[all]>=5.0.0
+pytest>=8.4.0
+pytest-cov>=6.1.0
+pytest-asyncio>=0.26.0
+pytest-mock>=3.15.0
+moto[all]>=5.1.0
+localstack-client>=2.8.0
+testcontainers[localstack]>=4.14.2
 
-# Type Checking
-mypy>=1.13.0
+mypy>=1.16.0
 types-python-dateutil>=2.9.0
-boto3-stubs[s3,sqs,dynamodb,kms]>=1.35.0
+boto3-stubs[s3,sqs,dynamodb,kms]>=1.42.0
 
-# Linting & Formatting
-ruff>=0.7.0
-black>=24.10.0
-isort>=5.13.0
-
-# Pre-commit hooks
+ruff>=0.14.0
+black>=26.5.0
 pre-commit>=4.0.0
 
-# Security Scanning
-pip-audit>=2.7.0
-cyclonedx-bom>=4.0.0
-safety>=3.2.0
-bandit>=1.7.0
-
-# LocalStack testing
-localstack-client>=2.6.0
-
-# Integration testing with Testcontainers
-testcontainers[localstack]>=4.8.0
+pip-audit>=2.10.0
+cyclonedx-bom>=7.3.0
+safety>=3.7.0
+bandit>=1.9.4

@@ -1,9 +1,6 @@
-# =============================================================================
-# File Processor Application Service
-# =============================================================================
 """
 Main application service for processing file events.
-Orchestrates the workflow: download → analyze → store metadata → publish result.
+Orchestrates the workflow: download -> analyze -> store metadata -> publish result.
 
 Implements Outbox Pattern for reliable event publishing - metadata and outbox
 events are written atomically in a single DynamoDB transaction.
@@ -124,7 +121,6 @@ class FileProcessorService:
         try:
             log.info("Starting file processing")
 
-            # Route based on event type
             if event.event_type == EventType.FILE_UPLOADED:
                 result = self._process_uploaded_file(event, result, log)
             elif event.event_type == EventType.FILE_SCANNED:
@@ -173,23 +169,19 @@ class FileProcessorService:
         log: Any,
     ) -> ProcessingResult:
         """Process a newly uploaded file."""
-        # Validate file size
         if event.file_metadata.file_size_bytes > self._max_file_size:
             raise NonRetryableError(
                 message=f"File too large: {event.file_metadata.file_size_bytes} bytes "
                 f"(max: {self._max_file_size} bytes)",
             )
 
-        # Create initial metadata record
         timestamp = datetime.now(UTC).isoformat()
         metadata_record = self._create_metadata_record(event, timestamp)
         metadata_record.status = ProcessingStatus.IN_PROGRESS
 
-        # Save initial status (non-transactional, just metadata)
         self._metadata.save(metadata_record)
         log.debug("Initial metadata record saved")
 
-        # Download file from S3
         file_content = self._storage.download(
             bucket_name=event.storage_location.bucket_name,
             object_key=event.storage_location.object_key,
@@ -201,21 +193,17 @@ class FileProcessorService:
             encrypted=file_content.is_encrypted,
         )
 
-        # Compute file hash using SHA-256 (FIPS 180-4).
         file_hash = self._crypto.compute_hash(file_content.data, "SHA-256")
         log.debug("File hash computed", hash=file_hash[:16] + "...")
 
-        # Analyze file
         analysis_result = self._analyze_file(file_content, log)
 
-        # Update metadata with results
         metadata_record.file_hash = file_hash
         metadata_record.is_safe = analysis_result.is_safe
         metadata_record.scan_findings = analysis_result.findings
         metadata_record.status = ProcessingStatus.COMPLETED
         metadata_record.processed_at = datetime.now(UTC).isoformat()
 
-        # Create outbox event for completion
         if analysis_result.is_safe:
             outbox_event = OutboxEvent.for_file_processed(
                 file_id=event.file_id_str,
@@ -233,7 +221,6 @@ class FileProcessorService:
                 findings=analysis_result.findings,
             )
 
-        # Use transactional write with Outbox Pattern if enabled
         if self._use_outbox and self._outbox:
             self._outbox.save_with_outbox(metadata_record, outbox_event)
             log.info(
@@ -242,11 +229,9 @@ class FileProcessorService:
                 event_type=outbox_event.event_type.value,
             )
         else:
-            # Fallback to non-transactional (dual write - less reliable)
             self._metadata.save(metadata_record)
             log.debug("Metadata record updated with analysis results")
 
-            # Publish completion event directly
             completion_event = event.with_new_event_type(EventType.ANALYSIS_COMPLETED)
             self._publisher.publish(completion_event)
             log.info("Completion event published (direct mode)")
@@ -268,7 +253,6 @@ class FileProcessorService:
         log: Any,
     ) -> ProcessingResult:
         """Process a file that has been scanned externally."""
-        # Just update metadata for externally scanned files
         timestamp = datetime.now(UTC).isoformat()
         metadata_record = self._create_metadata_record(event, timestamp)
         metadata_record.status = ProcessingStatus.COMPLETED
@@ -293,14 +277,11 @@ class FileProcessorService:
         """
         findings: list[str] = []
 
-        # Basic content checks
         data = content.data
 
-        # Check for empty file
         if len(data) == 0:
             findings.append("File is empty")
 
-        # Check for potential executable content (simplified)
         if data[:2] == b"MZ":  # DOS/Windows executable
             findings.append("Potentially executable content (PE format)")
 
@@ -310,10 +291,8 @@ class FileProcessorService:
         if data[:4] == b"%PDF":  # PDF
             log.debug("PDF file detected")
 
-        # Compute content hash
         content_hash = self._crypto.compute_hash(data, "SHA-256")
 
-        # Determine if safe (simplified logic)
         is_safe = len([f for f in findings if "executable" in f.lower()]) == 0
 
         log.debug(
@@ -357,14 +336,12 @@ class FileProcessorService:
     ) -> None:
         """Handle processing failure - update metadata and publish failure event."""
         try:
-            # Create metadata record with failure status
             timestamp = datetime.now(UTC).isoformat()
             record = self._create_metadata_record(event, timestamp)
             record.status = ProcessingStatus.FAILED
             record.error_message = error_message
             record.error_code = error_code
 
-            # Create outbox event for failure
             outbox_event = OutboxEvent.for_file_failed(
                 file_id=event.file_id_str,
                 correlation_id=str(event.correlation_id),
@@ -372,7 +349,6 @@ class FileProcessorService:
                 error_message=error_message,
             )
 
-            # Use transactional write with Outbox Pattern if enabled
             if self._use_outbox and self._outbox:
                 self._outbox.save_with_outbox(record, outbox_event)
                 logger.info(
@@ -380,15 +356,12 @@ class FileProcessorService:
                     event_id=outbox_event.event_id,
                 )
             else:
-                # Fallback to non-transactional
                 self._metadata.save(record)
 
-                # Publish failure event directly
                 failure_event = event.with_new_event_type(EventType.PROCESSING_FAILED)
                 self._publisher.publish(failure_event)
 
         except Exception as e:
-            # Log but don't raise - we're already handling an error
             logger.exception(
                 "Failed to handle processing failure",
                 original_error=error_message,

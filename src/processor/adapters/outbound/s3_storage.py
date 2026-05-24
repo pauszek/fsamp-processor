@@ -1,6 +1,3 @@
-# =============================================================================
-# S3 File Storage Adapter
-# =============================================================================
 """
 S3 implementation of the FileStorage port.
 Handles file downloads/uploads with server-side encryption.
@@ -154,7 +151,6 @@ class S3FileStorage(FileStorage):
             if metadata:
                 put_params["Metadata"] = metadata
 
-            # Enforce KMS encryption (FedRAMP SC-13, SC-28)
             if self._default_kms_key_id:
                 put_params["ServerSideEncryption"] = "aws:kms"
                 put_params["SSEKMSKeyId"] = self._default_kms_key_id

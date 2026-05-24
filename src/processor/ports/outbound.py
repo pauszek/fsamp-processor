@@ -1,6 +1,3 @@
-# =============================================================================
-# Outbound Ports (Driven Adapters)
-# =============================================================================
 """
 Outbound ports define interfaces for the domain to interact with external services.
 These are implemented by output adapters (e.g., S3 Client, DynamoDB Repository).
@@ -258,7 +255,7 @@ class CryptoProvider(ABC):
     """
     Port for cryptographic operations.
     Implemented by adapters like KMS Crypto Provider.
-    Compliant with FIPS 140-3 requirements.
+    FIPS 140-3-oriented requirements.
     """
 
     @abstractmethod

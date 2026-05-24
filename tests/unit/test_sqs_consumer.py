@@ -1,8 +1,3 @@
-# =============================================================================
-# Unit Tests for SQS Consumer
-# =============================================================================
-"""Tests for SQS Consumer adapter - simplified version without threading issues."""
-
 from datetime import UTC
 from unittest.mock import MagicMock, patch
 
@@ -12,16 +7,12 @@ from botocore.exceptions import ClientError
 from processor.adapters.inbound.sqs_consumer import SQSConsumer
 from processor.domain.exceptions import MessageError, NonRetryableError
 
-# Valid KMS ARN format: arn:aws:kms:{region}:{account}:key/{uuid}
 VALID_KMS_KEY_ID = "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
 
 
 class TestSQSConsumerInit:
-    """Tests for SQSConsumer initialization."""
-
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_init_with_valid_params(self, mock_signal) -> None:
-        """Test initialization with valid parameters."""
         client = MagicMock()
         handler = MagicMock()
 
@@ -42,7 +33,6 @@ class TestSQSConsumerInit:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_init_clamps_max_messages_upper(self, mock_signal) -> None:
-        """Test that max_messages is clamped to upper bound."""
         client = MagicMock()
         handler = MagicMock()
 
@@ -56,7 +46,6 @@ class TestSQSConsumerInit:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_init_clamps_max_messages_lower(self, mock_signal) -> None:
-        """Test that max_messages is clamped to lower bound."""
         client = MagicMock()
         handler = MagicMock()
 
@@ -70,11 +59,8 @@ class TestSQSConsumerInit:
 
 
 class TestSQSConsumerReceiveMessages:
-    """Tests for message receiving."""
-
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_receive_messages_success(self, mock_signal) -> None:
-        """Test successful message receiving."""
         client = MagicMock()
         messages = [
             {"MessageId": "msg-1", "Body": "{}", "ReceiptHandle": "handle-1"},
@@ -95,7 +81,6 @@ class TestSQSConsumerReceiveMessages:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_receive_messages_empty(self, mock_signal) -> None:
-        """Test receiving when no messages available."""
         client = MagicMock()
         client.receive_message.return_value = {}
 
@@ -110,11 +95,8 @@ class TestSQSConsumerReceiveMessages:
 
 
 class TestSQSConsumerAcknowledge:
-    """Tests for message acknowledgment."""
-
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_acknowledge_success(self, mock_signal) -> None:
-        """Test successful acknowledgment."""
         client = MagicMock()
         consumer = SQSConsumer(
             sqs_client=client,
@@ -131,7 +113,6 @@ class TestSQSConsumerAcknowledge:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_acknowledge_no_receipt_handle(self, mock_signal) -> None:
-        """Test acknowledgment with no receipt handle."""
         client = MagicMock()
         consumer = SQSConsumer(
             sqs_client=client,
@@ -144,7 +125,6 @@ class TestSQSConsumerAcknowledge:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_acknowledge_client_error(self, mock_signal) -> None:
-        """Test acknowledgment with client error."""
         client = MagicMock()
         client.delete_message.side_effect = ClientError(
             {"Error": {"Code": "InvalidParameterValue"}},
@@ -162,11 +142,8 @@ class TestSQSConsumerAcknowledge:
 
 
 class TestSQSConsumerReject:
-    """Tests for message rejection."""
-
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_reject_with_requeue(self, mock_signal) -> None:
-        """Test rejection with requeue."""
         client = MagicMock()
         consumer = SQSConsumer(
             sqs_client=client,
@@ -184,7 +161,6 @@ class TestSQSConsumerReject:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_reject_without_requeue(self, mock_signal) -> None:
-        """Test rejection without requeue (delete)."""
         client = MagicMock()
         consumer = SQSConsumer(
             sqs_client=client,
@@ -198,7 +174,6 @@ class TestSQSConsumerReject:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_reject_no_receipt_handle(self, mock_signal) -> None:
-        """Test rejection with no receipt handle."""
         client = MagicMock()
         consumer = SQSConsumer(
             sqs_client=client,
@@ -212,7 +187,6 @@ class TestSQSConsumerReject:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_reject_client_error(self, mock_signal) -> None:
-        """Test rejection with client error."""
         client = MagicMock()
         client.change_message_visibility.side_effect = ClientError(
             {"Error": {"Code": "InvalidParameterValue"}},
@@ -230,11 +204,8 @@ class TestSQSConsumerReject:
 
 
 class TestSQSConsumerQueueAttributes:
-    """Tests for queue attributes."""
-
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_get_queue_attributes_success(self, mock_signal) -> None:
-        """Test getting queue attributes."""
         client = MagicMock()
         client.get_queue_attributes.return_value = {
             "Attributes": {
@@ -256,7 +227,6 @@ class TestSQSConsumerQueueAttributes:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_get_queue_attributes_error(self, mock_signal) -> None:
-        """Test getting queue attributes with error."""
         client = MagicMock()
         client.get_queue_attributes.side_effect = ClientError(
             {"Error": {"Code": "AccessDenied"}},
@@ -274,11 +244,8 @@ class TestSQSConsumerQueueAttributes:
 
 
 class TestSQSConsumerIsRunning:
-    """Tests for is_running method."""
-
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_is_running_initially_false(self, mock_signal) -> None:
-        """Test that is_running is initially False."""
         client = MagicMock()
         consumer = SQSConsumer(
             sqs_client=client,
@@ -290,7 +257,6 @@ class TestSQSConsumerIsRunning:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_is_running_reflects_running_state(self, mock_signal) -> None:
-        """Test that is_running reflects _running state."""
         client = MagicMock()
         consumer = SQSConsumer(
             sqs_client=client,
@@ -306,11 +272,8 @@ class TestSQSConsumerIsRunning:
 
 
 class TestSQSConsumerSignalHandler:
-    """Tests for signal handler."""
-
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_signal_handler_sets_running_false(self, mock_signal) -> None:
-        """Test that signal handler stops the consumer."""
         client = MagicMock()
         consumer = SQSConsumer(
             sqs_client=client,
@@ -325,11 +288,8 @@ class TestSQSConsumerSignalHandler:
 
 
 class TestSQSConsumerProcessMessage:
-    """Tests for _process_message method."""
-
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_process_message_success(self, mock_signal) -> None:
-        """Test successful message processing."""
         import json
         from datetime import datetime
         from uuid import uuid4
@@ -343,7 +303,6 @@ class TestSQSConsumerProcessMessage:
             handler=handler,
         )
 
-        # Create valid file event
         file_event = {
             "schema_version": "1.1.0",
             "file_id": str(uuid4()),
@@ -384,7 +343,6 @@ class TestSQSConsumerProcessMessage:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_process_message_validation_error(self, mock_signal) -> None:
-        """Test message processing with validation error - requeued as unexpected error."""
         import json
 
         client = MagicMock()
@@ -396,7 +354,6 @@ class TestSQSConsumerProcessMessage:
             handler=handler,
         )
 
-        # Invalid message body - pydantic validation will fail
         raw_message = {
             "MessageId": "msg-1",
             "Body": json.dumps({"invalid": "data"}),
@@ -407,14 +364,11 @@ class TestSQSConsumerProcessMessage:
 
         consumer._process_message(raw_message)
 
-        # Handler should not be called for invalid events
         handler.assert_not_called()
-        # Message should be requeued (pydantic ValidationError is caught as generic Exception)
         client.change_message_visibility.assert_called_once()
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_process_message_non_retryable_error(self, mock_signal) -> None:
-        """Test message processing with non-retryable error."""
         import json
         from datetime import datetime
         from uuid import uuid4
@@ -464,12 +418,10 @@ class TestSQSConsumerProcessMessage:
 
         consumer._process_message(raw_message)
 
-        # Message should be deleted (rejected without requeue)
         client.delete_message.assert_called_once()
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_process_message_unexpected_error(self, mock_signal) -> None:
-        """Test message processing with unexpected error - requeue."""
         import json
         from datetime import datetime
         from uuid import uuid4
@@ -519,16 +471,12 @@ class TestSQSConsumerProcessMessage:
 
         consumer._process_message(raw_message)
 
-        # Message should be requeued
         client.change_message_visibility.assert_called_once()
 
 
 class TestSQSConsumerStartStop:
-    """Tests for start/stop without actually starting threads."""
-
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_stop_when_not_running(self, mock_signal) -> None:
-        """Test stop when consumer is not running."""
         client = MagicMock()
         consumer = SQSConsumer(
             sqs_client=client,
@@ -536,13 +484,11 @@ class TestSQSConsumerStartStop:
             handler=MagicMock(),
         )
 
-        # Should not raise
         consumer.stop()
         assert consumer._running is False
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_start_when_already_running(self, mock_signal) -> None:
-        """Test start when consumer is already running."""
         client = MagicMock()
         consumer = SQSConsumer(
             sqs_client=client,
@@ -551,6 +497,5 @@ class TestSQSConsumerStartStop:
         )
 
         consumer._running = True
-        # Should return without starting new thread
         consumer.start()
         assert consumer._running is True

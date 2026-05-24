@@ -1,8 +1,3 @@
-# =============================================================================
-# Unit Tests for Application Configuration
-# =============================================================================
-"""Tests for pydantic settings and computed configuration flags."""
-
 from processor.config import Settings, get_settings
 
 

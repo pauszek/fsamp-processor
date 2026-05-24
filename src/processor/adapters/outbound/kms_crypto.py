@@ -1,6 +1,3 @@
-# =============================================================================
-# KMS Crypto Provider Adapter - FIPS 140-3-Oriented
-# =============================================================================
 """
 KMS implementation of the CryptoProvider port.
 Provides FIPS 140-3-oriented cryptographic operations using AWS KMS
@@ -29,7 +26,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# FIPS 140-3-oriented constants
 AES_KEY_SIZE = 256  # bits
 GCM_NONCE_SIZE = 12  # bytes (96 bits as per NIST SP 800-38D)
 GCM_TAG_SIZE = 16  # bytes (128 bits)
@@ -45,7 +41,7 @@ class KMSCryptoProvider(CryptoProvider):
     3. Encrypted DEK is stored alongside ciphertext
 
     FIPS 140-3-oriented posture:
-    - Uses AWS KMS (FIPS 140-2 Level 3 validated)
+    - Uses AWS KMS (FIPS 140-3 Level 3 validated or in validation)
     - AES-256-GCM for symmetric encryption
     - SHA-256/384/512 for hashing
     - No disallowed legacy algorithms (MD5, SHA-1, DES, etc.)
@@ -97,7 +93,7 @@ class KMSCryptoProvider(CryptoProvider):
         try:
             params: dict[str, Any] = {
                 "KeyId": self._key_id,
-                "KeySpec": "AES_256",  # FIPS compliant
+                "KeySpec": "AES_256",  # FIPS-approved key size
             }
 
             if context:
@@ -186,19 +182,15 @@ class KMSCryptoProvider(CryptoProvider):
         [ciphertext + tag (variable)]
         """
         try:
-            # Generate data key
             plaintext_key, encrypted_key = self.generate_data_key(context)
 
-            # Generate random nonce (IV)
             import os
 
             nonce = os.urandom(GCM_NONCE_SIZE)
 
-            # Encrypt with AES-256-GCM (FIPS 140-3 approved)
             aesgcm = AESGCM(plaintext_key)
             ciphertext = aesgcm.encrypt(nonce, plaintext, None)
 
-            # Build envelope: key_len + encrypted_key + nonce + ciphertext
             key_len_bytes = len(encrypted_key).to_bytes(4, byteorder="big")
             envelope = cast(bytes, key_len_bytes + encrypted_key + nonce + ciphertext)
 
@@ -232,7 +224,6 @@ class KMSCryptoProvider(CryptoProvider):
         Parses the envelope format and decrypts using KMS for key decryption.
         """
         try:
-            # Parse envelope
             if len(ciphertext) < 4:
                 raise CryptoError(
                     message="Ciphertext too short - invalid envelope",
@@ -256,10 +247,8 @@ class KMSCryptoProvider(CryptoProvider):
 
             encrypted_data = ciphertext[offset:]
 
-            # Decrypt data key using KMS
             plaintext_key = self._decrypt_data_key(encrypted_key, context)
 
-            # Decrypt with AES-256-GCM
             aesgcm = AESGCM(plaintext_key)
             plaintext = aesgcm.decrypt(nonce, encrypted_data, None)
 
@@ -386,7 +375,7 @@ class LocalCryptoProvider(CryptoProvider):
             self._master_key = os.urandom(32)
 
         logger.warning(
-            "Using LocalCryptoProvider - NOT FIPS 140-3 COMPLIANT!",
+            "Using LocalCryptoProvider - not part of the FIPS 140-3-oriented runtime!",
             use_case="local development only",
         )
 
@@ -399,7 +388,6 @@ class LocalCryptoProvider(CryptoProvider):
 
         plaintext_key = os.urandom(32)
 
-        # "Encrypt" data key with master key using XOR (simplified for testing)
         encrypted_key = bytes(a ^ b for a, b in zip(plaintext_key, self._master_key * 2))
 
         return plaintext_key, encrypted_key
@@ -430,7 +418,6 @@ class LocalCryptoProvider(CryptoProvider):
 
         encrypted_data = ciphertext[offset:]
 
-        # "Decrypt" data key
         plaintext_key = bytes(a ^ b for a, b in zip(encrypted_key, self._master_key * 2))
 
         aesgcm = AESGCM(plaintext_key)

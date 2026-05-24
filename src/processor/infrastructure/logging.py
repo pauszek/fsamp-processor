@@ -1,6 +1,3 @@
-# =============================================================================
-# Structured Logging Configuration
-# =============================================================================
 """
 Structured logging setup using structlog.
 Outputs JSON in production, pretty console in development.
@@ -26,10 +23,8 @@ def configure_logging(
         json_format: If True, output JSON logs. If False, pretty console output.
         service_name: Service name to include in all logs.
     """
-    # Convert level string to logging constant
     log_level = getattr(logging, level.upper(), logging.INFO)
 
-    # Shared processors for all environments
     shared_processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
@@ -41,13 +36,11 @@ def configure_logging(
     ]
 
     if json_format:
-        # Production: JSON output
         processors = shared_processors + [
             structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(),
         ]
     else:
-        # Development: Pretty console output
         processors = shared_processors + [
             structlog.dev.ConsoleRenderer(
                 colors=True,
@@ -55,7 +48,6 @@ def configure_logging(
             ),
         ]
 
-    # Configure structlog
     structlog.configure(
         processors=processors,
         wrapper_class=structlog.stdlib.BoundLogger,
@@ -64,19 +56,16 @@ def configure_logging(
         cache_logger_on_first_use=True,
     )
 
-    # Configure standard library logging
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
         level=log_level,
     )
 
-    # Set levels for noisy libraries
     logging.getLogger("boto3").setLevel(logging.WARNING)
     logging.getLogger("botocore").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-    # Add service name to all logs
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(service=service_name)
 

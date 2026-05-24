@@ -1,12 +1,5 @@
-# =============================================================================
-# FSAMP Processor - Makefile
-# =============================================================================
-# Usage: make <target>
-# =============================================================================
+.PHONY: help install dev test lint format type-check clean build run docker-build
 
-.PHONY: help install dev test lint format type-check clean build run docker-build docker-run
-
-# Python settings
 PYTHON := python3
 VENV := .venv
 PIP := $(VENV)/bin/pip
@@ -15,7 +8,6 @@ RUFF := $(VENV)/bin/ruff
 BLACK := $(VENV)/bin/black
 MYPY := $(VENV)/bin/mypy
 
-# Docker settings
 IMAGE_NAME := fsamp-processor
 IMAGE_TAG := latest
 
@@ -44,16 +36,10 @@ help:
 	@echo ""
 	@echo "Docker:"
 	@echo "  docker-build  Build Docker image"
-	@echo "  docker-run    Run in Docker (with LocalStack)"
-	@echo "  docker-stop   Stop Docker containers"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  clean         Remove build artifacts"
 	@echo "  clean-all     Remove all generated files"
-
-# =============================================================================
-# Setup
-# =============================================================================
 
 $(VENV):
 	$(PYTHON) -m venv $(VENV)
@@ -68,10 +54,6 @@ dev: $(VENV)
 	$(PIP) install -r requirements-dev.txt
 	$(PIP) install -e ".[dev]"
 
-# =============================================================================
-# Quality Checks
-# =============================================================================
-
 lint: $(VENV)
 	$(RUFF) check src/ tests/
 
@@ -85,10 +67,6 @@ type-check: $(VENV)
 check: lint type-check
 	@echo "All checks passed!"
 
-# =============================================================================
-# Testing
-# =============================================================================
-
 test: $(VENV)
 	$(PYTEST) tests/ -v
 
@@ -101,35 +79,14 @@ test-int: $(VENV)
 coverage: $(VENV)
 	$(PYTEST) tests/ --cov=processor --cov-report=html --cov-report=term-missing
 
-# =============================================================================
-# Running
-# =============================================================================
-
 run: $(VENV)
 	$(VENV)/bin/python -m processor.main
 
 run-debug: $(VENV)
 	LOG_LEVEL=DEBUG LOG_FORMAT=console $(VENV)/bin/python -m processor.main
 
-# =============================================================================
-# Docker
-# =============================================================================
-
 docker-build:
 	docker build -t $(IMAGE_NAME):$(IMAGE_TAG) .
-
-docker-run:
-	docker-compose up -d
-
-docker-stop:
-	docker-compose down
-
-docker-logs:
-	docker-compose logs -f processor
-
-# =============================================================================
-# Cleanup
-# =============================================================================
 
 clean:
 	rm -rf build/
