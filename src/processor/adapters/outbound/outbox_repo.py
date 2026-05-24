@@ -1,4 +1,3 @@
-# =============================================================================
 """
 DynamoDB implementation of the Outbox Pattern for reliable event publishing.
 
@@ -108,7 +107,6 @@ class DynamoDBOutboxRepository(OutboxRepository):
             metadata_item = record.to_dynamodb_item()
             outbox_item = outbox_event.to_dynamodb_item()
 
-            # TransactWriteItems - atomic write to both tables
             self._client.transact_write_items(
                 TransactItems=[
                     {
@@ -137,14 +135,12 @@ class DynamoDBOutboxRepository(OutboxRepository):
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
 
             if error_code == "TransactionCanceledException":
-                # Check cancellation reasons
                 reasons = e.response.get("CancellationReasons", [])
                 log.warning(
                     "Transaction cancelled",
                     reasons=[r.get("Code") for r in reasons],
                 )
 
-                # If it's a conditional check failure on metadata, item already exists
                 if any(r.get("Code") == "ConditionalCheckFailed" for r in reasons):
                     log.info("Metadata record already exists, likely duplicate event")
                     return
@@ -213,7 +209,6 @@ class DynamoDBOutboxRepository(OutboxRepository):
 
         try:
             now = datetime.now(UTC).isoformat()
-            # Set TTL to 24 hours from now for automatic cleanup
             ttl = int((datetime.now(UTC) + timedelta(hours=24)).timestamp())
 
             self._client.update_item(
@@ -353,7 +348,6 @@ class DynamoDBOutboxRepository(OutboxRepository):
         try:
             cutoff = (datetime.now(UTC) - timedelta(hours=older_than_hours)).isoformat()
 
-            # Query published events older than cutoff
             response = self._client.query(
                 TableName=self._outbox_table_name,
                 IndexName="GSI1",
@@ -368,7 +362,6 @@ class DynamoDBOutboxRepository(OutboxRepository):
 
             items = response.get("Items", [])
 
-            # Batch delete (max 25 per batch)
             for i in range(0, len(items), 25):
                 batch = items[i : i + 25]
                 delete_requests = [

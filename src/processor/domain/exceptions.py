@@ -1,6 +1,3 @@
-# =============================================================================
-# Domain Exceptions
-# =============================================================================
 """
 Custom exceptions for the FSAMP Processor domain.
 Follows enterprise patterns with error codes and context.

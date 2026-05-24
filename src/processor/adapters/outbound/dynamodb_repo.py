@@ -1,6 +1,3 @@
-# =============================================================================
-# DynamoDB Metadata Repository Adapter
-# =============================================================================
 """
 DynamoDB implementation of the MetadataRepository port.
 Stores file metadata with single-table design.
@@ -72,7 +69,6 @@ class DynamoDBMetadataRepository(MetadataRepository):
 
             item = record.to_dynamodb_item()
 
-            # Add GSI keys for status-based queries
             item["GSI1PK"] = {"S": f"STATUS#{record.status.value}"}
             item["GSI1SK"] = {"S": record.timestamp}
 
@@ -103,7 +99,6 @@ class DynamoDBMetadataRepository(MetadataRepository):
         log = logger.bind(file_id=file_id)
 
         try:
-            # Query for the latest record (newest timestamp first)
             response = self._client.query(
                 TableName=self._table_name,
                 KeyConditionExpression="PK = :pk",
@@ -192,7 +187,6 @@ class DynamoDBMetadataRepository(MetadataRepository):
                 ":updated": {"S": datetime.now(UTC).isoformat()},
             }
 
-            # Also update GSI1PK for status queries
             update_expr += ", GSI1PK = :gsi1pk"
             expr_values[":gsi1pk"] = {"S": f"STATUS#{status}"}
 

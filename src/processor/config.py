@@ -1,6 +1,3 @@
-# =============================================================================
-# Application Configuration
-# =============================================================================
 """
 Pydantic-based configuration using environment variables.
 Supports both AWS Lambda and LocalStack/ECS environments.
@@ -28,27 +25,15 @@ class Settings(BaseSettings):
         extra="ignore",
         populate_by_name=True,
     )
-
-    # -------------------------------------------------------------------------
-    # Environment
-    # -------------------------------------------------------------------------
     environment: Literal["local", "dev", "staging", "prod"] = Field(
         default="local",
         description="Deployment environment",
     )
-
-    # -------------------------------------------------------------------------
-    # Lambda-specific settings
-    # -------------------------------------------------------------------------
     is_lambda: bool = Field(
         default=False,
         description="Whether running as AWS Lambda (auto-detected)",
         alias="AWS_LAMBDA_FUNCTION_NAME",
     )
-
-    # -------------------------------------------------------------------------
-    # AWS Configuration
-    # -------------------------------------------------------------------------
     aws_region: str = Field(
         default="us-west-2",
         description="AWS region",
@@ -65,13 +50,9 @@ class Settings(BaseSettings):
         default=None,
         description="AWS secret key (optional, uses default chain)",
     )
-
-    # -------------------------------------------------------------------------
-    # FIPS 140-3-oriented security posture
-    # -------------------------------------------------------------------------
     use_fips_endpoint: bool = Field(
         default=True,
-        description="Use FIPS 140-3 validated AWS endpoints (requires us-* region)",
+        description="Use AWS FIPS endpoints where supported (requires us-* region)",
     )
 
     fips_required: bool | None = Field(
@@ -79,10 +60,6 @@ class Settings(BaseSettings):
         description="Require FIPS mode for crypto/TLS (defaults to non-local only)",
         alias="FIPS_REQUIRED",
     )
-
-    # -------------------------------------------------------------------------
-    # Resource Configuration
-    # -------------------------------------------------------------------------
     sqs_queue_url: str = Field(
         default="",
         description="URL of the SQS processing queue",
@@ -107,10 +84,6 @@ class Settings(BaseSettings):
         default="",
         description="KMS key ID/ARN/alias for encryption",
     )
-
-    # -------------------------------------------------------------------------
-    # SQS Consumer Settings (for ECS/Container mode only)
-    # -------------------------------------------------------------------------
     sqs_max_messages: int = Field(
         default=10,
         ge=1,
@@ -129,10 +102,6 @@ class Settings(BaseSettings):
         le=43200,
         description="SQS message visibility timeout",
     )
-
-    # -------------------------------------------------------------------------
-    # Processing Settings
-    # -------------------------------------------------------------------------
     processing_max_retries: int = Field(
         default=3,
         ge=0,
@@ -149,10 +118,6 @@ class Settings(BaseSettings):
         default=100 * 1024 * 1024,  # 100 MB
         description="Maximum allowed file size",
     )
-
-    # -------------------------------------------------------------------------
-    # Logging
-    # -------------------------------------------------------------------------
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO",
         description="Logging level",
@@ -162,9 +127,6 @@ class Settings(BaseSettings):
         description="Log output format",
     )
 
-    # -------------------------------------------------------------------------
-    # Validators
-    # -------------------------------------------------------------------------
     @field_validator("environment", mode="before")
     @classmethod
     def lowercase_environment(cls, v: str) -> str:
@@ -175,9 +137,6 @@ class Settings(BaseSettings):
     def uppercase_log_level(cls, v: str) -> str:
         return v.upper() if isinstance(v, str) else v
 
-    # -------------------------------------------------------------------------
-    # Computed Properties
-    # -------------------------------------------------------------------------
     @property
     def is_local(self) -> bool:
         """Check if running in local environment."""

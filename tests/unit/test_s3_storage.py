@@ -1,8 +1,3 @@
-# =============================================================================
-# Unit Tests for S3 Storage Adapter
-# =============================================================================
-"""Tests for S3 File Storage adapter."""
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,10 +9,7 @@ from processor.domain.models import FileContent
 
 
 class TestS3FileStorageInit:
-    """Tests for S3FileStorage initialization."""
-
     def test_init_with_kms_key(self) -> None:
-        """Test initialization with KMS key."""
         client = MagicMock()
         storage = S3FileStorage(
             s3_client=client,
@@ -28,7 +20,6 @@ class TestS3FileStorageInit:
         assert storage._default_kms_key_id == "test-key-id"
 
     def test_init_without_kms_key(self) -> None:
-        """Test initialization without KMS key."""
         client = MagicMock()
         storage = S3FileStorage(s3_client=client)
 
@@ -36,11 +27,8 @@ class TestS3FileStorageInit:
 
 
 class TestS3FileStorageDownload:
-    """Tests for download method."""
-
     @pytest.fixture
     def storage(self) -> S3FileStorage:
-        """Create storage for testing."""
         client = MagicMock()
         client.get_object.return_value = {
             "Body": MagicMock(read=lambda: b"test content"),
@@ -53,7 +41,6 @@ class TestS3FileStorageDownload:
         return S3FileStorage(s3_client=client)
 
     def test_download_success(self, storage: S3FileStorage) -> None:
-        """Test successful download."""
         result = storage.download("test-bucket", "test-key")
 
         assert isinstance(result, FileContent)
@@ -62,7 +49,6 @@ class TestS3FileStorageDownload:
         assert result.etag == "abc123"
 
     def test_download_no_such_key(self) -> None:
-        """Test download when key doesn't exist."""
         client = MagicMock()
         client.get_object.side_effect = ClientError(
             {"Error": {"Code": "NoSuchKey", "Message": "Not found"}},
@@ -76,7 +62,6 @@ class TestS3FileStorageDownload:
         assert "File not found" in str(exc_info.value)
 
     def test_download_access_denied(self) -> None:
-        """Test download with access denied."""
         client = MagicMock()
         client.get_object.side_effect = ClientError(
             {"Error": {"Code": "AccessDenied", "Message": "Access denied"}},
@@ -90,7 +75,6 @@ class TestS3FileStorageDownload:
         assert "Access denied" in str(exc_info.value)
 
     def test_download_other_error(self) -> None:
-        """Test download with other error."""
         client = MagicMock()
         client.get_object.side_effect = ClientError(
             {"Error": {"Code": "InternalError", "Message": "Internal error"}},
@@ -105,17 +89,13 @@ class TestS3FileStorageDownload:
 
 
 class TestS3FileStorageUpload:
-    """Tests for upload method."""
-
     @pytest.fixture
     def storage(self) -> S3FileStorage:
-        """Create storage for testing."""
         client = MagicMock()
         client.put_object.return_value = {"ETag": '"def456"'}
         return S3FileStorage(s3_client=client, default_kms_key_id="test-key")
 
     def test_upload_success(self, storage: S3FileStorage) -> None:
-        """Test successful upload."""
         etag = storage.upload(
             bucket_name="test-bucket",
             object_key="test-key",
@@ -127,7 +107,6 @@ class TestS3FileStorageUpload:
         storage._client.put_object.assert_called_once()
 
     def test_upload_with_metadata(self, storage: S3FileStorage) -> None:
-        """Test upload with metadata."""
         storage.upload(
             bucket_name="test-bucket",
             object_key="test-key",
@@ -139,7 +118,6 @@ class TestS3FileStorageUpload:
         assert call_kwargs["Metadata"] == {"custom": "value"}
 
     def test_upload_with_kms_encryption(self, storage: S3FileStorage) -> None:
-        """Test upload uses KMS encryption."""
         storage.upload(
             bucket_name="test-bucket",
             object_key="test-key",
@@ -151,7 +129,6 @@ class TestS3FileStorageUpload:
         assert call_kwargs["SSEKMSKeyId"] == "test-key"
 
     def test_upload_without_kms_raises_error(self) -> None:
-        """Test upload without KMS raises StorageError (FedRAMP SC-13)."""
         client = MagicMock()
         storage = S3FileStorage(s3_client=client)
 
@@ -165,7 +142,6 @@ class TestS3FileStorageUpload:
         client.put_object.assert_not_called()
 
     def test_upload_error(self) -> None:
-        """Test upload with error."""
         client = MagicMock()
         client.put_object.side_effect = ClientError(
             {"Error": {"Code": "InternalError"}},
@@ -178,10 +154,7 @@ class TestS3FileStorageUpload:
 
 
 class TestS3FileStorageExists:
-    """Tests for exists method."""
-
     def test_exists_true(self) -> None:
-        """Test exists returns True when object exists."""
         client = MagicMock()
         storage = S3FileStorage(s3_client=client)
 
@@ -191,7 +164,6 @@ class TestS3FileStorageExists:
         client.head_object.assert_called_once()
 
     def test_exists_false(self) -> None:
-        """Test exists returns False when object doesn't exist."""
         client = MagicMock()
         client.head_object.side_effect = ClientError(
             {"Error": {"Code": "404"}},
@@ -204,7 +176,6 @@ class TestS3FileStorageExists:
         assert result is False
 
     def test_exists_other_error(self) -> None:
-        """Test exists raises on other errors."""
         client = MagicMock()
         client.head_object.side_effect = ClientError(
             {"Error": {"Code": "AccessDenied"}},
@@ -217,10 +188,7 @@ class TestS3FileStorageExists:
 
 
 class TestS3FileStorageDelete:
-    """Tests for delete method."""
-
     def test_delete_success(self) -> None:
-        """Test successful delete."""
         client = MagicMock()
         storage = S3FileStorage(s3_client=client)
 
@@ -232,7 +200,6 @@ class TestS3FileStorageDelete:
         )
 
     def test_delete_error(self) -> None:
-        """Test delete with error."""
         client = MagicMock()
         client.delete_object.side_effect = ClientError(
             {"Error": {"Code": "InternalError"}},
@@ -245,10 +212,7 @@ class TestS3FileStorageDelete:
 
 
 class TestS3FileStoragePresignedUrl:
-    """Tests for get_presigned_url method."""
-
     def test_get_presigned_url_success(self) -> None:
-        """Test successful presigned URL generation."""
         client = MagicMock()
         client.generate_presigned_url.return_value = "https://presigned-url"
         storage = S3FileStorage(s3_client=client)
@@ -259,7 +223,6 @@ class TestS3FileStoragePresignedUrl:
         client.generate_presigned_url.assert_called_once()
 
     def test_get_presigned_url_error(self) -> None:
-        """Test presigned URL generation with error."""
         client = MagicMock()
         client.generate_presigned_url.side_effect = ClientError(
             {"Error": {"Code": "InternalError"}},
@@ -272,17 +235,13 @@ class TestS3FileStoragePresignedUrl:
 
 
 class TestS3FileStorageCopy:
-    """Tests for copy method."""
-
     @pytest.fixture
     def storage(self) -> S3FileStorage:
-        """Create storage for testing."""
         client = MagicMock()
         client.copy_object.return_value = {"CopyObjectResult": {"ETag": '"copied"'}}
         return S3FileStorage(s3_client=client, default_kms_key_id="test-key")
 
     def test_copy_success(self, storage: S3FileStorage) -> None:
-        """Test successful copy."""
         etag = storage.copy(
             source_bucket="source-bucket",
             source_key="source-key",
@@ -294,7 +253,6 @@ class TestS3FileStorageCopy:
         storage._client.copy_object.assert_called_once()
 
     def test_copy_with_kms(self, storage: S3FileStorage) -> None:
-        """Test copy uses KMS encryption."""
         storage.copy(
             source_bucket="source",
             source_key="key",
@@ -307,7 +265,6 @@ class TestS3FileStorageCopy:
         assert call_kwargs["SSEKMSKeyId"] == "test-key"
 
     def test_copy_error(self) -> None:
-        """Test copy with error."""
         client = MagicMock()
         client.copy_object.side_effect = ClientError(
             {"Error": {"Code": "InternalError"}},

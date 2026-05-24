@@ -1,8 +1,3 @@
-# =============================================================================
-# Unit Tests for Domain Events (Schema v1.1.0)
-# =============================================================================
-"""Tests for Pydantic event models following schema v1.1.0."""
-
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -20,16 +15,11 @@ from processor.domain.events import (
     StorageLocation,
 )
 
-# ============================================================================
-# Test Fixtures - Schema v1.1.0 compliant
-# ============================================================================
-
 SAMPLE_CHECKSUM = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 SAMPLE_KMS_ARN = "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012"
 
 
 def create_valid_file_metadata(**overrides) -> FileMetadata:
-    """Create valid FileMetadata for testing."""
     defaults = {
         "original_filename": "document.pdf",
         "file_size_bytes": 1024,
@@ -41,7 +31,6 @@ def create_valid_file_metadata(**overrides) -> FileMetadata:
 
 
 def create_valid_security_context(**overrides) -> SecurityContext:
-    """Create valid SecurityContext for testing."""
     defaults = {
         "is_encrypted": True,
         "encryption_algorithm": "AES/GCM/NoPadding",
@@ -52,7 +41,6 @@ def create_valid_security_context(**overrides) -> SecurityContext:
 
 
 def create_valid_event_data() -> dict:
-    """Create valid event data dict matching schema v1.1.0."""
     return {
         "schemaVersion": SCHEMA_VERSION,
         "fileId": str(uuid4()),
@@ -80,10 +68,7 @@ def create_valid_event_data() -> dict:
 
 
 class TestFileMetadata:
-    """Tests for FileMetadata model v1.1.0."""
-
     def test_valid_metadata(self) -> None:
-        """Test creating valid file metadata."""
         metadata = create_valid_file_metadata()
 
         assert metadata.original_filename == "document.pdf"
@@ -92,7 +77,6 @@ class TestFileMetadata:
         assert metadata.checksum_sha256 == SAMPLE_CHECKSUM
 
     def test_metadata_from_camel_case(self) -> None:
-        """Test creating metadata from camelCase keys (JSON)."""
         metadata = FileMetadata.model_validate(
             {
                 "originalFilename": "test.txt",
@@ -106,42 +90,33 @@ class TestFileMetadata:
         assert metadata.file_size_bytes == 500
 
     def test_invalid_filename_empty(self) -> None:
-        """Test that empty filename is rejected."""
         with pytest.raises(ValidationError):
             create_valid_file_metadata(original_filename="")
 
     def test_invalid_file_size_negative(self) -> None:
-        """Test that negative file size is rejected."""
         with pytest.raises(ValidationError):
             create_valid_file_metadata(file_size_bytes=-1)
 
     def test_file_size_max_100mb(self) -> None:
-        """Test that file size over 100MB is rejected."""
         with pytest.raises(ValidationError):
             create_valid_file_metadata(file_size_bytes=104857601)
 
     def test_checksum_is_required(self) -> None:
-        """Test that checksumSHA256 is required (FIPS 180-4)."""
         with pytest.raises(ValidationError) as exc_info:
             FileMetadata(
                 original_filename="test.pdf",
                 file_size_bytes=1024,
                 mime_type="application/pdf",
-                # Missing checksum_sha256
             )
         assert "checksum" in str(exc_info.value).lower()
 
     def test_invalid_checksum_format(self) -> None:
-        """Test that invalid SHA-256 format is rejected."""
         with pytest.raises(ValidationError):
             create_valid_file_metadata(checksum_sha256="not-a-valid-sha256")
 
 
 class TestStorageLocation:
-    """Tests for StorageLocation model."""
-
     def test_valid_location(self) -> None:
-        """Test creating valid storage location."""
         location = StorageLocation(
             bucket_name="my-bucket",
             object_key="path/to/file.pdf",
@@ -151,7 +126,6 @@ class TestStorageLocation:
         assert location.object_key == "path/to/file.pdf"
 
     def test_s3_uri_property(self) -> None:
-        """Test S3 URI generation."""
         location = StorageLocation(
             bucket_name="fsamp-files",
             object_key="uploads/2024/doc.pdf",
@@ -160,7 +134,6 @@ class TestStorageLocation:
         assert location.s3_uri == "s3://fsamp-files/uploads/2024/doc.pdf"
 
     def test_location_from_camel_case(self) -> None:
-        """Test creating location from camelCase keys."""
         location = StorageLocation.model_validate(
             {
                 "bucketName": "fsamp-bucket",
@@ -173,10 +146,7 @@ class TestStorageLocation:
 
 
 class TestSecurityContext:
-    """Tests for SecurityContext model v1.1.0 - FIPS 140-3-oriented."""
-
     def test_full_context(self) -> None:
-        """Test fully populated security context."""
         context = create_valid_security_context()
 
         assert context.is_encrypted is True
@@ -184,7 +154,6 @@ class TestSecurityContext:
         assert context.kms_key_id == SAMPLE_KMS_ARN
 
     def test_encryption_must_be_true(self) -> None:
-        """Test that is_encrypted must be True (FIPS requirement)."""
         with pytest.raises(ValidationError):
             SecurityContext(
                 is_encrypted=False,  # Not allowed
@@ -193,7 +162,6 @@ class TestSecurityContext:
             )
 
     def test_only_aes_gcm_allowed(self) -> None:
-        """Test that only AES-GCM is allowed (FIPS 140-3)."""
         with pytest.raises(ValidationError):
             SecurityContext(
                 is_encrypted=True,
@@ -202,17 +170,14 @@ class TestSecurityContext:
             )
 
     def test_kms_key_required(self) -> None:
-        """Test that KMS key is required."""
         with pytest.raises(ValidationError) as exc_info:
             SecurityContext(
                 is_encrypted=True,
                 encryption_algorithm="AES/GCM/NoPadding",
-                # Missing kms_key_id
             )
         assert "kms" in str(exc_info.value).lower()
 
     def test_kms_arn_format_validated(self) -> None:
-        """Test that KMS ARN format is validated."""
         with pytest.raises(ValidationError):
             SecurityContext(
                 is_encrypted=True,
@@ -222,10 +187,7 @@ class TestSecurityContext:
 
 
 class TestFileEvent:
-    """Tests for FileEvent model v1.1.0."""
-
     def test_valid_event(self) -> None:
-        """Test creating valid file event."""
         event_data = create_valid_event_data()
         event = FileEvent.model_validate(event_data)
 
@@ -235,7 +197,6 @@ class TestFileEvent:
         assert event.file_metadata.original_filename == "test.pdf"
 
     def test_event_immutable(self) -> None:
-        """Test that event is immutable (frozen)."""
         event_data = create_valid_event_data()
         event = FileEvent.model_validate(event_data)
 
@@ -243,7 +204,6 @@ class TestFileEvent:
             event.event_type = EventType.FILE_SCANNED
 
     def test_with_new_event_type(self) -> None:
-        """Test creating new event with different type."""
         event_data = create_valid_event_data()
         original = FileEvent.model_validate(event_data)
         updated = original.with_new_event_type(EventType.ANALYSIS_COMPLETED)
@@ -251,7 +211,6 @@ class TestFileEvent:
         assert original.event_type == EventType.FILE_UPLOADED
         assert updated.event_type == EventType.ANALYSIS_COMPLETED
         assert original.event_id == updated.event_id  # Same ID
-        # Compare timezone-aware timestamps
         original_ts = (
             original.timestamp.replace(tzinfo=UTC)
             if original.timestamp.tzinfo is None
@@ -266,7 +225,6 @@ class TestFileEvent:
         assert updated.source == EventSource.PROCESSOR  # Updated source
 
     def test_invalid_event_type(self) -> None:
-        """Test that invalid event type is rejected."""
         event_data = create_valid_event_data()
         event_data["eventType"] = "INVALID_TYPE"
 
@@ -274,7 +232,6 @@ class TestFileEvent:
             FileEvent.model_validate(event_data)
 
     def test_serialize_to_json(self) -> None:
-        """Test serializing event to JSON with camelCase."""
         event_data = create_valid_event_data()
         event = FileEvent.model_validate(event_data)
         json_dict = event.model_dump(mode="json", by_alias=True)
@@ -288,7 +245,6 @@ class TestFileEvent:
         assert "checksumSHA256" in json_dict["fileMetadata"]
 
     def test_correlation_id_must_be_uuid(self) -> None:
-        """Test that correlationId must be UUID (v1.1.0 requirement)."""
         event_data = create_valid_event_data()
         event_data["correlationId"] = "not-a-uuid"
 
@@ -297,7 +253,6 @@ class TestFileEvent:
         assert "correlation" in str(exc_info.value).lower()
 
     def test_source_must_be_valid(self) -> None:
-        """Test that source must be valid enum value."""
         event_data = create_valid_event_data()
         event_data["source"] = "invalid-source"
 
@@ -306,10 +261,7 @@ class TestFileEvent:
 
 
 class TestSQSMessageWrapper:
-    """Tests for SQS message wrapper v1.1.0."""
-
     def test_direct_event_extraction(self) -> None:
-        """Test extracting FileEvent from direct message body."""
         event_data = create_valid_event_data()
 
         import orjson
@@ -324,7 +276,6 @@ class TestSQSMessageWrapper:
         assert event.file_metadata.checksum_sha256 == SAMPLE_CHECKSUM
 
     def test_sns_wrapped_event_extraction(self) -> None:
-        """Test extracting FileEvent from SNS notification wrapper."""
         event_data = create_valid_event_data()
 
         import orjson

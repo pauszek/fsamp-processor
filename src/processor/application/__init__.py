@@ -1,6 +1,3 @@
-# =============================================================================
-# Application Layer
-# =============================================================================
 """
 Application services implementing business use cases.
 Orchestrates domain objects and ports.

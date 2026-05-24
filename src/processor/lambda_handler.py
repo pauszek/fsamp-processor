@@ -1,6 +1,3 @@
-# =============================================================================
-# Lambda Handler - AWS Lambda Entry Point
-# =============================================================================
 """
 AWS Lambda handler for FSAMP Processor.
 
@@ -47,21 +44,11 @@ from processor.domain.events import FileEvent
 from processor.domain.exceptions import NonRetryableError, ProcessingError
 from processor.infrastructure import AWSClientFactory, enforce_fips
 
-# =============================================================================
-# AWS Lambda Powertools Configuration
-# =============================================================================
-
 logger = Logger(service="fsamp-processor")
 tracer = Tracer(service="fsamp-processor")
 metrics = Metrics(service="fsamp-processor", namespace="FSAMP/Processor")
 
-# Batch processor for SQS with partial batch response
 processor = BatchProcessor(event_type=EventType.SQS)
-
-# =============================================================================
-# Global Application Components (reused across invocations - warm start)
-# =============================================================================
-
 _file_processor: FileProcessorService | None = None
 _settings: Settings | None = None
 
@@ -80,20 +67,16 @@ def get_file_processor() -> FileProcessorService:
 
     logger.info("Initializing FileProcessorService (cold start)")
 
-    # Load settings
     _settings = get_settings()
 
-    # Enforce FIPS mode when required
     enforce_fips(_settings.should_require_fips)
 
-    # Create AWS client factory with FIPS support
     aws_factory = AWSClientFactory(
         region=_settings.aws_region,
         endpoint_url=_settings.aws_endpoint_url,
         use_fips=_settings.should_use_fips,
     )
 
-    # Create adapters
     file_storage = S3FileStorage(
         s3_client=aws_factory.get_s3_client(),
         default_kms_key_id=_settings.kms_key_id,
@@ -114,7 +97,6 @@ def get_file_processor() -> FileProcessorService:
         key_id=_settings.kms_key_id,
     )
 
-    # Create Outbox Repository for transactional writes
     outbox_repo = None
     if _settings.outbox_table_name:
         outbox_repo = DynamoDBOutboxRepository(
@@ -124,7 +106,6 @@ def get_file_processor() -> FileProcessorService:
         )
         logger.info("Outbox Pattern enabled", outbox_table=_settings.outbox_table_name)
 
-    # Create application service
     _file_processor = FileProcessorService(
         file_storage=file_storage,
         metadata_repo=metadata_repo,
@@ -139,11 +120,6 @@ def get_file_processor() -> FileProcessorService:
         "FileProcessorService initialized successfully", outbox_enabled=outbox_repo is not None
     )
     return _file_processor
-
-
-# =============================================================================
-# Record Handler (processes single SQS message)
-# =============================================================================
 
 
 @tracer.capture_method
@@ -166,24 +142,19 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
     message_id = record.message_id
     start_time = time.time()
 
-    # Add correlation context to logger
     logger.append_keys(message_id=message_id)
 
     try:
-        # Parse the SQS message body (could be direct or SNS-wrapped)
         body = json.loads(record.body)
 
-        # Handle SNS notification wrapper if present
         if "Message" in body and "TopicArn" in body:
             logger.debug("Unwrapping SNS notification")
             event_data = json.loads(body["Message"])
         else:
             event_data = body
 
-        # Parse FileEvent from message
         file_event = FileEvent.model_validate(event_data)
 
-        # Add event context to logger and tracer
         logger.append_keys(
             event_id=str(file_event.event_id),
             file_id=file_event.file_id_str,
@@ -195,7 +166,6 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         tracer.put_annotation("event_type", file_event.event_type.value)
         tracer.put_annotation("correlation_id", str(file_event.correlation_id))
 
-        # Record file size metric
         file_size_bytes = file_event.file_metadata.file_size_bytes
         metrics.add_metric(name="FileSizeBytes", unit=MetricUnit.Bytes, value=file_size_bytes)
 
@@ -205,14 +175,11 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
             file_size_bytes=file_size_bytes,
         )
 
-        # Get processor and handle event
         file_processor = get_file_processor()
         result = file_processor.handle(file_event)
 
-        # Calculate total processing time
         total_duration_ms = int((time.time() - start_time) * 1000)
 
-        # Record detailed success metrics
         metrics.add_metric(name="FilesProcessed", unit=MetricUnit.Count, value=1)
         metrics.add_metric(name="FilesProcessedSuccess", unit=MetricUnit.Count, value=1)
         metrics.add_metric(
@@ -221,14 +188,12 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
             value=result.duration_ms or total_duration_ms,
         )
 
-        # Record metrics by file type
         mime_type = file_event.file_metadata.mime_type or "unknown"
         metrics.add_dimension(
             name="MimeType", value=mime_type.split("/")[0] if "/" in mime_type else mime_type
         )
         metrics.add_metric(name="FilesByType", unit=MetricUnit.Count, value=1)
 
-        # Record if file was marked safe or not
         if result.metadata.get("is_safe") is True:
             metrics.add_metric(name="SafeFiles", unit=MetricUnit.Count, value=1)
         elif result.metadata.get("is_safe") is False:
@@ -252,19 +217,16 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         }
 
     except NonRetryableError as e:
-        # Non-retryable errors - don't retry, log and continue
         logger.warning("Non-retryable error", error=str(e))
         metrics.add_metric(name="FilesProcessed", unit=MetricUnit.Count, value=1)
         metrics.add_metric(name="FilesProcessedFailed", unit=MetricUnit.Count, value=1)
         metrics.add_metric(name="NonRetryableErrors", unit=MetricUnit.Count, value=1)
 
-        # Record processing duration even for failures
         total_duration_ms = int((time.time() - start_time) * 1000)
         metrics.add_metric(
             name="FailedProcessingDuration", unit=MetricUnit.Milliseconds, value=total_duration_ms
         )
 
-        # Return success to prevent retry (error is logged, event is dead-lettered)
         return {
             "messageId": message_id,
             "status": "skipped",
@@ -273,7 +235,6 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         }
 
     except ProcessingError as e:
-        # Retryable errors - raise to trigger retry via batch item failure
         logger.error("Processing error (retryable)", error=str(e), retryable=e.retryable)
         metrics.add_metric(name="FilesProcessed", unit=MetricUnit.Count, value=1)
         metrics.add_metric(name="FilesProcessedFailed", unit=MetricUnit.Count, value=1)
@@ -281,17 +242,11 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         raise
 
     except Exception:
-        # Unexpected errors - raise for retry
         logger.exception("Unexpected error processing message")
         metrics.add_metric(name="FilesProcessed", unit=MetricUnit.Count, value=1)
         metrics.add_metric(name="FilesProcessedFailed", unit=MetricUnit.Count, value=1)
         metrics.add_metric(name="UnexpectedErrors", unit=MetricUnit.Count, value=1)
         raise
-
-
-# =============================================================================
-# Lambda Handler (main entry point)
-# =============================================================================
 
 
 @logger.inject_lambda_context(log_event=False)
@@ -319,7 +274,6 @@ def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, A
     Returns:
         Response with batchItemFailures for failed messages
     """
-    # Log batch info
     records = event.get("Records", [])
     logger.info(
         "Processing SQS batch",
@@ -328,20 +282,12 @@ def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, A
         remaining_time_ms=context.get_remaining_time_in_millis(),
     )
 
-    # Record batch metrics
     metrics.add_metric(name="BatchSize", unit=MetricUnit.Count, value=len(records))
 
-    # The @batch_processor decorator handles processing and returns
-    # {"batchItemFailures": [...]} for partial batch response
     return cast(dict[str, Any], processor.response())
 
 
-# =============================================================================
-# Local Testing Support
-# =============================================================================
-
 if __name__ == "__main__":
-    # For local testing with sample event
     import sys
 
     sample_event = {
@@ -386,7 +332,6 @@ if __name__ == "__main__":
         ]
     }
 
-    # Mock context
     class MockContext:
         function_name = "test-function"
         memory_limit_in_mb = 512

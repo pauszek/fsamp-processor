@@ -1,8 +1,3 @@
-# =============================================================================
-# Unit Tests for Main Module
-# =============================================================================
-"""Tests for main application entry point."""
-
 import os
 from unittest.mock import MagicMock, patch
 
@@ -12,11 +7,8 @@ from processor.main import create_application, main
 
 
 class TestCreateApplication:
-    """Tests for create_application function."""
-
     @pytest.fixture(autouse=True)
     def setup_env(self) -> None:
-        """Set up environment variables."""
         os.environ["AWS_REGION"] = "us-west-2"
         os.environ["SQS_QUEUE_URL"] = "http://localhost:4566/queue/test"
         os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test"
@@ -53,10 +45,8 @@ class TestCreateApplication:
         mock_crypto,
         mock_factory,
     ) -> None:
-        """Test successful application creation."""
         from processor.config import Settings
 
-        # Setup mocks
         mock_factory_instance = MagicMock()
         mock_factory_instance.verify_connectivity.return_value = {
             "s3": True,
@@ -90,7 +80,6 @@ class TestCreateApplication:
         self,
         mock_factory,
     ) -> None:
-        """Test application creation with connectivity failure."""
         from processor.config import Settings
 
         mock_factory_instance = MagicMock()
@@ -129,7 +118,6 @@ class TestCreateApplication:
         mock_crypto,
         mock_factory,
     ) -> None:
-        """Test application creation with KMS key access failure."""
         from processor.config import Settings
 
         mock_factory_instance = MagicMock()
@@ -161,11 +149,8 @@ class TestCreateApplication:
 
 
 class TestMain:
-    """Tests for main function."""
-
     @pytest.fixture(autouse=True)
     def setup_env(self) -> None:
-        """Set up environment variables."""
         os.environ["AWS_REGION"] = "us-west-2"
         os.environ["SQS_QUEUE_URL"] = "http://localhost:4566/queue/test"
         os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test"
@@ -196,7 +181,6 @@ class TestMain:
         mock_settings,
         mock_create_app,
     ) -> None:
-        """Test successful main execution."""
         from processor.config import Settings
 
         mock_consumer = MagicMock()
@@ -220,7 +204,6 @@ class TestMain:
         self,
         mock_settings,
     ) -> None:
-        """Test main handles KeyboardInterrupt."""
         mock_settings.side_effect = KeyboardInterrupt()
 
         result = main()
@@ -232,7 +215,6 @@ class TestMain:
         self,
         mock_settings,
     ) -> None:
-        """Test main handles exceptions."""
         mock_settings.side_effect = Exception("Test error")
 
         result = main()
@@ -248,7 +230,6 @@ class TestMain:
         mock_settings,
         mock_create_app,
     ) -> None:
-        """Test main handles create_application failure."""
         from processor.config import Settings
 
         mock_create_app.side_effect = RuntimeError("Failed to create app")

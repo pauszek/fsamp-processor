@@ -1,6 +1,3 @@
-# =============================================================================
-# Outbound Adapters
-# =============================================================================
 """Outbound adapters for interacting with external services."""
 
 from processor.adapters.outbound.dynamodb_repo import DynamoDBMetadataRepository

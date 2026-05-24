@@ -1,8 +1,3 @@
-# =============================================================================
-# Integration Tests for DynamoDB Repository
-# =============================================================================
-"""Tests for DynamoDBMetadataRepository with mocked AWS."""
-
 from datetime import datetime
 
 import pytest
@@ -14,13 +9,10 @@ pytestmark = pytest.mark.integration
 
 
 class TestDynamoDBMetadataRepository:
-    """Integration tests for DynamoDB metadata repository."""
-
     @pytest.fixture
     def repo(
         self, localstack_dynamodb_client, localstack_table_name: str
     ) -> DynamoDBMetadataRepository:
-        """Create DynamoDB repository."""
         return DynamoDBMetadataRepository(
             dynamodb_client=localstack_dynamodb_client,
             table_name=localstack_table_name,
@@ -28,7 +20,6 @@ class TestDynamoDBMetadataRepository:
 
     @pytest.fixture
     def sample_record(self) -> MetadataRecord:
-        """Create sample metadata record."""
         return MetadataRecord(
             file_id="test-file-001",
             timestamp=datetime.utcnow().isoformat(),
@@ -45,11 +36,8 @@ class TestDynamoDBMetadataRepository:
     def test_save_and_get(
         self, repo: DynamoDBMetadataRepository, sample_record: MetadataRecord
     ) -> None:
-        """Test saving and retrieving a record."""
-        # Save
         repo.save(sample_record)
 
-        # Get
         retrieved = repo.get_by_id(sample_record.file_id)
 
         assert retrieved is not None
@@ -58,15 +46,12 @@ class TestDynamoDBMetadataRepository:
         assert retrieved.original_filename == sample_record.original_filename
 
     def test_get_nonexistent(self, repo: DynamoDBMetadataRepository) -> None:
-        """Test getting a record that doesn't exist."""
         result = repo.get_by_id("nonexistent-id")
         assert result is None
 
     def test_get_history(self, repo: DynamoDBMetadataRepository) -> None:
-        """Test getting record history."""
         file_id = "history-test-file"
 
-        # Save multiple records with different timestamps
         for i in range(5):
             record = MetadataRecord(
                 file_id=file_id,
@@ -81,28 +66,22 @@ class TestDynamoDBMetadataRepository:
             )
             repo.save(record)
 
-        # Get history
         history = repo.get_history(file_id, limit=10)
 
         assert len(history) == 5
-        # Should be newest first (descending)
         assert history[0].timestamp > history[-1].timestamp
 
     def test_update_status(
         self, repo: DynamoDBMetadataRepository, sample_record: MetadataRecord
     ) -> None:
-        """Test updating record status."""
-        # Save initial record
         repo.save(sample_record)
 
-        # Update status
         repo.update_status(
             file_id=sample_record.file_id,
             timestamp=sample_record.timestamp,
             status=ProcessingStatus.COMPLETED.value,
         )
 
-        # Verify update
         retrieved = repo.get_by_id(sample_record.file_id)
         assert retrieved is not None
         assert retrieved.status == ProcessingStatus.COMPLETED
@@ -110,7 +89,6 @@ class TestDynamoDBMetadataRepository:
     def test_update_status_with_error(
         self, repo: DynamoDBMetadataRepository, sample_record: MetadataRecord
     ) -> None:
-        """Test updating status with error message."""
         repo.save(sample_record)
 
         repo.update_status(
@@ -126,8 +104,6 @@ class TestDynamoDBMetadataRepository:
         assert retrieved.error_message == "Processing failed: timeout"
 
     def test_query_by_status(self, repo: DynamoDBMetadataRepository) -> None:
-        """Test querying records by status using GSI."""
-        # Create records with different statuses
         for i, status in enumerate(
             [
                 ProcessingStatus.PENDING,
@@ -149,10 +125,8 @@ class TestDynamoDBMetadataRepository:
             )
             repo.save(record)
 
-        # Query pending records
         pending = repo.query_by_status(ProcessingStatus.PENDING.value)
         assert len(pending) == 2
 
-        # Query completed records
         completed = repo.query_by_status(ProcessingStatus.COMPLETED.value)
         assert len(completed) == 1

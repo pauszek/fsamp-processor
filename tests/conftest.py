@@ -1,11 +1,3 @@
-# =============================================================================
-# Pytest Configuration & Fixtures
-# =============================================================================
-"""
-Shared fixtures for all tests.
-Schema v1.1.0 compliant - FIPS 140-3.
-"""
-
 import os
 from collections.abc import Generator
 from datetime import UTC, datetime
@@ -25,22 +17,12 @@ from processor.domain.events import (
     StorageLocation,
 )
 
-# =============================================================================
-# Test Constants - Schema v1.1.0
-# =============================================================================
-
 SAMPLE_CHECKSUM_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 SAMPLE_KMS_ARN = "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012"
 
 
-# =============================================================================
-# Environment Setup
-# =============================================================================
-
-
 @pytest.fixture(autouse=True)
 def aws_credentials() -> None:
-    """Mock AWS credentials for moto."""
     os.environ["AWS_ACCESS_KEY_ID"] = "testing"
     os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
     os.environ["AWS_SECURITY_TOKEN"] = "testing"
@@ -48,23 +30,15 @@ def aws_credentials() -> None:
     os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
 
 
-# =============================================================================
-# AWS Mock Fixtures
-# =============================================================================
-
-
 @pytest.fixture
 def mock_aws_services() -> Generator[None]:
-    """Start all AWS mocks."""
     with mock_aws():
         yield
 
 
 @pytest.fixture
 def s3_client(mock_aws_services: None) -> boto3.client:
-    """Create mock S3 client."""
     client = boto3.client("s3", region_name="us-west-2")
-    # Create test bucket (idempotent - ignore if already exists)
     try:
         client.create_bucket(
             Bucket="test-bucket",
@@ -77,46 +51,35 @@ def s3_client(mock_aws_services: None) -> boto3.client:
 
 @pytest.fixture
 def sqs_client(mock_aws_services: None) -> boto3.client:
-    """Create mock SQS client."""
     client = boto3.client("sqs", region_name="us-west-2")
     return client
 
 
 @pytest.fixture
 def sns_client(mock_aws_services: None) -> boto3.client:
-    """Create mock SNS client."""
     client = boto3.client("sns", region_name="us-west-2")
     return client
 
 
 @pytest.fixture
 def dynamodb_client(mock_aws_services: None) -> boto3.client:
-    """Create mock DynamoDB client."""
     client = boto3.client("dynamodb", region_name="us-west-2")
     return client
 
 
 @pytest.fixture
 def kms_client(mock_aws_services: None) -> boto3.client:
-    """Create mock KMS client."""
     client = boto3.client("kms", region_name="us-west-2")
     return client
 
 
-# =============================================================================
-# Resource Fixtures
-# =============================================================================
-
-
 @pytest.fixture
 def test_bucket(s3_client: boto3.client) -> str:
-    """Return the test bucket name."""
     return "test-bucket"
 
 
 @pytest.fixture
 def test_queue_url(sqs_client: boto3.client) -> str:
-    """Create a test SQS queue and return its URL."""
     response = sqs_client.create_queue(
         QueueName="test-queue",
         Attributes={
@@ -129,14 +92,12 @@ def test_queue_url(sqs_client: boto3.client) -> str:
 
 @pytest.fixture
 def test_topic_arn(sns_client: boto3.client) -> str:
-    """Create a test SNS topic and return its ARN."""
     response = sns_client.create_topic(Name="test-topic")
     return response["TopicArn"]
 
 
 @pytest.fixture
 def test_table_name(dynamodb_client: boto3.client) -> str:
-    """Create a test DynamoDB table and return its name."""
     table_name = "test-metadata"
 
     dynamodb_client.create_table(
@@ -169,7 +130,6 @@ def test_table_name(dynamodb_client: boto3.client) -> str:
 
 @pytest.fixture
 def test_kms_key_id(kms_client: boto3.client) -> str:
-    """Create a test KMS key and return its ID."""
     response = kms_client.create_key(
         Description="Test key for FSAMP Processor",
         KeyUsage="ENCRYPT_DECRYPT",
@@ -177,26 +137,18 @@ def test_kms_key_id(kms_client: boto3.client) -> str:
     return response["KeyMetadata"]["KeyId"]
 
 
-# =============================================================================
-# Domain Object Fixtures
-# =============================================================================
-
-
 @pytest.fixture
 def sample_event_id() -> UUID:
-    """Generate a sample event ID (UUID)."""
     return uuid4()
 
 
 @pytest.fixture
 def sample_correlation_id() -> UUID:
-    """Generate a sample correlation ID (UUID per schema v1.1.0)."""
     return uuid4()
 
 
 @pytest.fixture
 def sample_file_metadata() -> FileMetadata:
-    """Create sample file metadata with SHA-256 checksum (FIPS 180-4)."""
     return FileMetadata(
         original_filename="test-document.pdf",
         file_size_bytes=1024,
@@ -207,7 +159,6 @@ def sample_file_metadata() -> FileMetadata:
 
 @pytest.fixture
 def sample_storage_location(test_bucket: str) -> StorageLocation:
-    """Create sample storage location."""
     return StorageLocation(
         bucket_name=test_bucket,
         object_key="uploads/2024/01/test-document.pdf",
@@ -216,7 +167,6 @@ def sample_storage_location(test_bucket: str) -> StorageLocation:
 
 @pytest.fixture
 def sample_security_context() -> SecurityContext:
-    """Create sample security context with valid KMS ARN (schema v1.1.0)."""
     return SecurityContext(
         is_encrypted=True,
         encryption_algorithm="AES/GCM/NoPadding",
@@ -232,7 +182,6 @@ def sample_file_event(
     sample_storage_location: StorageLocation,
     sample_security_context: SecurityContext,
 ) -> FileEvent:
-    """Create a sample file event (schema v1.1.0)."""
     return FileEvent(
         schema_version=SCHEMA_VERSION,
         file_id=sample_event_id,
@@ -249,5 +198,4 @@ def sample_file_event(
 
 @pytest.fixture
 def sample_file_content() -> bytes:
-    """Create sample file content."""
     return b"%PDF-1.4 Sample PDF content for testing purposes." + b"\x00" * 100

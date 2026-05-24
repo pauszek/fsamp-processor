@@ -1,6 +1,3 @@
-# =============================================================================
-# SQS Consumer Adapter
-# =============================================================================
 """
 SQS Consumer implementation for receiving file events.
 Implements the MessageConsumer port with long-polling and graceful shutdown.
@@ -78,7 +75,6 @@ class SQSConsumer(MessageConsumer):
         self._shutdown_event = threading.Event()
         self._consumer_thread: threading.Thread | None = None
 
-        # Register signal handlers
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
@@ -175,7 +171,6 @@ class SQSConsumer(MessageConsumer):
                     self._running = False
                     break
 
-                # Exponential backoff
                 backoff = min(2**consecutive_errors, 60)
                 time.sleep(backoff)
 
@@ -208,7 +203,6 @@ class SQSConsumer(MessageConsumer):
         log = logger.bind(message_id=message_id)
 
         try:
-            # Parse SQS message wrapper
             wrapper = SQSMessageWrapper(
                 message_id=message_id,
                 receipt_handle=receipt_handle,
@@ -217,7 +211,6 @@ class SQSConsumer(MessageConsumer):
                 MessageAttributes=raw_message.get("MessageAttributes", {}),
             )
 
-            # Extract FileEvent from message
             event = wrapper.get_file_event()
             log = log.bind(
                 event_id=event.event_id_str,
@@ -226,16 +219,13 @@ class SQSConsumer(MessageConsumer):
             )
             log.info("Processing event")
 
-            # Call the handler
             self._handler(event)
 
-            # Acknowledge successful processing
             self.acknowledge(receipt_handle)
             log.info("Event processed successfully")
 
         except EventValidationError as e:
             log.error("Event validation failed", error=str(e))
-            # Don't retry invalid events - send to DLQ
             self.reject(receipt_handle, requeue=False)
 
         except NonRetryableError as e:
@@ -244,7 +234,6 @@ class SQSConsumer(MessageConsumer):
 
         except Exception as e:
             log.exception("Processing failed", error=str(e))
-            # Let message become visible again for retry
             self.reject(receipt_handle, requeue=True)
 
     def acknowledge(self, receipt_handle: str | None) -> None:
@@ -285,7 +274,6 @@ class SQSConsumer(MessageConsumer):
 
         try:
             if requeue:
-                # Make message immediately visible for retry
                 self._client.change_message_visibility(
                     QueueUrl=self._queue_url,
                     ReceiptHandle=receipt_handle,
@@ -293,7 +281,6 @@ class SQSConsumer(MessageConsumer):
                 )
                 logger.debug("Message requeued for retry")
             else:
-                # Delete message (DLQ will receive it based on redrive policy)
                 self._client.delete_message(
                     QueueUrl=self._queue_url,
                     ReceiptHandle=receipt_handle,

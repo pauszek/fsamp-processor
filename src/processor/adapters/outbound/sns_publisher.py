@@ -1,6 +1,3 @@
-# =============================================================================
-# SNS Event Publisher Adapter
-# =============================================================================
 """
 SNS implementation of the EventPublisher port.
 Publishes file events to SNS topics.
@@ -69,10 +66,8 @@ class SNSEventPublisher(EventPublisher):
         )
 
         try:
-            # Serialize event to JSON (camelCase for compatibility)
             message = orjson.dumps(event.model_dump(mode="json", by_alias=True)).decode("utf-8")
 
-            # Message attributes for filtering subscriptions
             message_attributes = {
                 "eventType": {
                     "DataType": "String",
@@ -126,7 +121,6 @@ class SNSEventPublisher(EventPublisher):
                 message_id = self.publish(event)
                 message_ids.append(message_id)
             except MessageError:
-                # Log and continue with other events
                 logger.error(
                     "Failed to publish event in batch",
                     event_id=str(event.event_id),

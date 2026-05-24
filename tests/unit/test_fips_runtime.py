@@ -1,8 +1,3 @@
-# =============================================================================
-# Unit Tests for FIPS Runtime Enforcement
-# =============================================================================
-"""Fail-closed checks for FIPS runtime enforcement."""
-
 import pytest
 
 from processor.config import Settings
@@ -10,8 +5,6 @@ from processor.infrastructure import fips
 
 
 class FakeOpenSslFunction:
-    """Callable that behaves enough like a ctypes OpenSSL function for tests."""
-
     def __init__(self, return_value: int) -> None:
         self.return_value = return_value
         self.argtypes = None

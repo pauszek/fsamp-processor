@@ -1,12 +1,9 @@
-# =============================================================================
-# AWS Client Factory
-# =============================================================================
 """
 Factory for creating AWS clients with proper configuration.
 Supports both real AWS and LocalStack endpoints.
 
 FIPS 140-3-oriented posture:
-- Uses FIPS-validated endpoints when available (us-* regions)
+- Uses AWS FIPS endpoints when available (us-* regions)
 - Configurable via USE_FIPS_ENDPOINT environment variable
 - Automatically disabled for LocalStack
 """
@@ -27,7 +24,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# Default boto3 config with retry logic
 DEFAULT_CONFIG = Config(
     retries={
         "max_attempts": 3,
@@ -37,7 +33,6 @@ DEFAULT_CONFIG = Config(
     read_timeout=30,
 )
 
-# FIPS-enabled config (for us-* regions)
 FIPS_CONFIG = Config(
     retries={
         "max_attempts": 3,
@@ -55,7 +50,7 @@ class AWSClientFactory:
 
     Handles:
     - LocalStack endpoint configuration
-    - FIPS 140-3 validated endpoints (us-* regions only)
+    - AWS FIPS endpoints where supported (us-* regions only)
     - Consistent retry and timeout settings
     - Client caching for reuse
 
@@ -79,16 +74,14 @@ class AWSClientFactory:
             region: AWS region.
             endpoint_url: Custom endpoint URL (e.g., LocalStack).
             config: Custom botocore Config.
-            use_fips: Whether to use FIPS 140-3 validated endpoints.
+            use_fips: Whether to use AWS FIPS endpoints.
         """
         self._region = region
         self._endpoint_url = endpoint_url
         self._is_local = endpoint_url is not None
 
-        # FIPS endpoints are only available in us-* regions and not for LocalStack
         self._use_fips = use_fips and region.startswith("us-") and not self._is_local
 
-        # Select appropriate config
         if config:
             self._config = config
         elif self._use_fips:
@@ -169,7 +162,6 @@ class AWSClientFactory:
         """
         results: dict[str, bool] = {}
 
-        # S3
         try:
             self.get_s3_client().list_buckets()
             results["s3"] = True
@@ -177,7 +169,6 @@ class AWSClientFactory:
             logger.warning("S3 connectivity check failed", error=str(e))
             results["s3"] = False
 
-        # SQS
         try:
             self.get_sqs_client().list_queues()
             results["sqs"] = True
@@ -185,7 +176,6 @@ class AWSClientFactory:
             logger.warning("SQS connectivity check failed", error=str(e))
             results["sqs"] = False
 
-        # SNS
         try:
             self.get_sns_client().list_topics()
             results["sns"] = True
@@ -193,7 +183,6 @@ class AWSClientFactory:
             logger.warning("SNS connectivity check failed", error=str(e))
             results["sns"] = False
 
-        # DynamoDB
         try:
             self.get_dynamodb_client().list_tables()
             results["dynamodb"] = True
@@ -201,7 +190,6 @@ class AWSClientFactory:
             logger.warning("DynamoDB connectivity check failed", error=str(e))
             results["dynamodb"] = False
 
-        # KMS
         try:
             self.get_kms_client().list_keys()
             results["kms"] = True

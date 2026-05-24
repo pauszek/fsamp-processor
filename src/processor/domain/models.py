@@ -1,6 +1,3 @@
-# =============================================================================
-# Domain Models
-# =============================================================================
 """
 Core domain models representing the state and results of file processing.
 Implements Outbox Pattern for reliable event publishing.
@@ -139,13 +136,10 @@ class MetadataRecord:
     Represents the persistent state of a processed file.
     """
 
-    # Partition Key
     file_id: str
 
-    # Sort Key (for versioning/history)
     timestamp: str
 
-    # Core attributes
     correlation_id: str
     original_filename: str
     file_size_bytes: int
@@ -154,26 +148,21 @@ class MetadataRecord:
     object_key: str
     status: ProcessingStatus
 
-    # Processing details
     file_hash: str | None = None
     is_encrypted: bool = True
     kms_key_id: str | None = None
 
-    # Analysis results
     is_safe: bool | None = None
     scan_findings: list[str] = field(default_factory=list)
 
-    # Timestamps
     created_at: str | None = None
     updated_at: str | None = None
     processed_at: str | None = None
 
-    # Error tracking
     error_message: str | None = None
     error_code: str | None = None
     retry_count: int = 0
 
-    # TTL for DynamoDB (optional cleanup)
     ttl: int | None = None
 
     def to_dynamodb_item(self) -> dict[str, Any]:
@@ -191,7 +180,6 @@ class MetadataRecord:
             "retryCount": {"N": str(self.retry_count)},
         }
 
-        # Optional fields
         if self.mime_type:
             item["mimeType"] = {"S": self.mime_type}
         if self.file_hash:
@@ -220,7 +208,6 @@ class MetadataRecord:
     @classmethod
     def from_dynamodb_item(cls, item: dict[str, Any]) -> MetadataRecord:
         """Create from DynamoDB item format."""
-        # Extract PK and SK
         pk = item["PK"]["S"]  # FILE#<file_id>
         sk = item["SK"]["S"]  # TS#<timestamp>
 
@@ -252,11 +239,6 @@ class MetadataRecord:
         )
 
 
-# =============================================================================
-# Outbox Pattern Models
-# =============================================================================
-
-
 @dataclass(slots=True)
 class OutboxEvent:
     """
@@ -274,34 +256,25 @@ class OutboxEvent:
     - Decoupled from message broker availability
     """
 
-    # Unique event identifier
     event_id: str
 
-    # Type of event (determines consumer routing)
     event_type: OutboxEventType
 
-    # Aggregate/entity this event relates to
     aggregate_id: str
     aggregate_type: str = "FileProcessing"
 
-    # Event payload (serialized JSON)
     payload: dict[str, Any] = field(default_factory=dict)
 
-    # Publishing status
     status: OutboxStatus = OutboxStatus.PENDING
 
-    # Timestamps
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     published_at: str | None = None
 
-    # Retry tracking for failed publishes
     retry_count: int = 0
     last_error: str | None = None
 
-    # Optional ordering key for FIFO topics
     message_group_id: str | None = None
 
-    # TTL for cleanup after publishing (24h default after publish)
     ttl: int | None = None
 
     @classmethod
@@ -403,7 +376,6 @@ class OutboxEvent:
             "status": {"S": self.status.value},
             "createdAt": {"S": self.created_at},
             "retryCount": {"N": str(self.retry_count)},
-            # GSI for querying pending events
             "GSI1PK": {"S": f"STATUS#{self.status.value}"},
             "GSI1SK": {"S": self.created_at},
         }
@@ -465,7 +437,6 @@ class OutboxEvent:
         """Mark event as published (returns new instance for immutability in tests)."""
         self.status = OutboxStatus.PUBLISHED
         self.published_at = datetime.now(UTC).isoformat()
-        # Set TTL to 24 hours from now for cleanup
         self.ttl = int(datetime.now(UTC).timestamp()) + 86400
         return self
 
