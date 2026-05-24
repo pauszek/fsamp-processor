@@ -1,14 +1,4 @@
-# =============================================================================
-# Pre-commit Configuration - fsamp-processor
-# =============================================================================
-# Install: pip install pre-commit && pre-commit install
-# Run manually: pre-commit run --all-files
-# =============================================================================
-
 repos:
-  # ============================================================
-  # General Hooks
-  # ============================================================
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
@@ -27,10 +17,6 @@ repos:
         args: [--fix=lf]
       - id: debug-statements
       - id: check-ast
-
-  # ============================================================
-  # Python Code Formatting
-  # ============================================================
   - repo: https://github.com/psf/black
     rev: 26.3.1
     hooks:
@@ -42,19 +28,11 @@ repos:
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
-
-  # ============================================================
-  # Python Import Sorting
-  # ============================================================
   - repo: https://github.com/pycqa/isort
     rev: 8.0.1
     hooks:
       - id: isort
         args: [--profile, black]
-
-  # ============================================================
-  # Python Type Checking
-  # ============================================================
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.19.1
     hooks:
@@ -70,37 +48,21 @@ repos:
           - types-python-dateutil>=2.9.0
         args: [--ignore-missing-imports]
         files: ^src/
-
-  # ============================================================
-  # Python Security
-  # ============================================================
   - repo: https://github.com/PyCQA/bandit
     rev: 1.9.4
     hooks:
       - id: bandit
         args: [-c, pyproject.toml]
         additional_dependencies: ["bandit[toml]"]
-
-  # ============================================================
-  # Secrets Detection
-  # ============================================================
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.0
     hooks:
       - id: gitleaks
-
-  # ============================================================
-  # Commit Message Format (Conventional Commits)
-  # ============================================================
   - repo: https://github.com/commitizen-tools/commitizen
     rev: v4.13.9
     hooks:
       - id: commitizen
         stages: [commit-msg]
-
-  # ============================================================
-  # Local Hooks (Tests)
-  # ============================================================
   - repo: local
     hooks:
       - id: pytest-unit
@@ -110,10 +72,6 @@ repos:
         types: [python]
         pass_filenames: false
         stages: [pre-push]
-
-# =============================================================================
-# CI Configuration
-# =============================================================================
 ci:
   autofix_prs: true
   autoupdate_schedule: weekly
