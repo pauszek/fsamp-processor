@@ -17,7 +17,11 @@ jobs:
   deploy-dev:
     name: Trigger Dev Deploy
     needs: call-python
-    if: github.event_name == 'push' && github.ref_name == 'main' && needs.call-python.result == 'success'
+    if: >
+      github.event_name == 'push' &&
+      github.ref_name == 'main' &&
+      needs.call-python.result == 'success' &&
+      vars.AUTO_DEPLOY_DEV == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
