@@ -10,6 +10,7 @@ import structlog
 from processor.adapters.inbound import SQSConsumer
 from processor.adapters.outbound import (
     DynamoDBMetadataRepository,
+    DynamoDBOutboxRepository,
     KMSCryptoProvider,
     S3FileStorage,
     SNSEventPublisher,
@@ -53,10 +54,21 @@ def create_application(settings: Settings) -> SQSConsumer:
         default_kms_key_id=settings.kms_key_id,
     )
 
+    dynamodb_client = aws_factory.get_dynamodb_client()
+
     metadata_repo = DynamoDBMetadataRepository(
-        dynamodb_client=aws_factory.get_dynamodb_client(),
+        dynamodb_client=dynamodb_client,
         table_name=settings.dynamodb_table_name,
     )
+
+    outbox_repo = None
+    if settings.outbox_table_name:
+        outbox_repo = DynamoDBOutboxRepository(
+            dynamodb_client=dynamodb_client,
+            metadata_table_name=settings.dynamodb_table_name,
+            outbox_table_name=settings.outbox_table_name,
+        )
+        logger.info("Outbox Pattern enabled", outbox_table=settings.outbox_table_name)
 
     event_publisher = SNSEventPublisher(
         sns_client=aws_factory.get_sns_client(),
@@ -77,6 +89,8 @@ def create_application(settings: Settings) -> SQSConsumer:
         event_publisher=event_publisher,
         crypto_provider=crypto_provider,
         max_file_size_bytes=settings.max_file_size_bytes,
+        outbox_repo=outbox_repo,
+        use_outbox_pattern=outbox_repo is not None,
     )
 
     consumer = SQSConsumer(

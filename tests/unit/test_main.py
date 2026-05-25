@@ -32,6 +32,7 @@ class TestCreateApplication:
     @patch("processor.main.KMSCryptoProvider")
     @patch("processor.main.S3FileStorage")
     @patch("processor.main.DynamoDBMetadataRepository")
+    @patch("processor.main.DynamoDBOutboxRepository")
     @patch("processor.main.SNSEventPublisher")
     @patch("processor.main.FileProcessorService")
     @patch("processor.main.SQSConsumer")
@@ -40,6 +41,7 @@ class TestCreateApplication:
         mock_consumer,
         mock_processor,
         mock_publisher,
+        mock_outbox_repo,
         mock_repo,
         mock_storage,
         mock_crypto,
@@ -73,7 +75,64 @@ class TestCreateApplication:
 
         mock_factory.assert_called_once()
         mock_crypto.assert_called_once()
+        mock_outbox_repo.assert_not_called()
         mock_consumer.assert_called_once()
+
+    @patch("processor.main.AWSClientFactory")
+    @patch("processor.main.KMSCryptoProvider")
+    @patch("processor.main.S3FileStorage")
+    @patch("processor.main.DynamoDBMetadataRepository")
+    @patch("processor.main.DynamoDBOutboxRepository")
+    @patch("processor.main.SNSEventPublisher")
+    @patch("processor.main.FileProcessorService")
+    @patch("processor.main.SQSConsumer")
+    def test_create_application_with_outbox(
+        self,
+        mock_consumer,
+        mock_processor,
+        mock_publisher,
+        mock_outbox_repo,
+        mock_repo,
+        mock_storage,
+        mock_crypto,
+        mock_factory,
+    ) -> None:
+        from processor.config import Settings
+
+        mock_factory_instance = MagicMock()
+        mock_factory_instance.verify_connectivity.return_value = {
+            "s3": True,
+            "sqs": True,
+            "sns": True,
+            "dynamodb": True,
+            "kms": True,
+        }
+        mock_factory.return_value = mock_factory_instance
+
+        mock_crypto_instance = MagicMock()
+        mock_crypto_instance.verify_key_access.return_value = True
+        mock_crypto.return_value = mock_crypto_instance
+
+        settings = Settings(
+            aws_region="us-west-2",
+            sqs_queue_url="http://queue",
+            sns_topic_arn="arn:aws:sns:test",
+            dynamodb_table_name="test-table",
+            outbox_table_name="test-outbox",
+            kms_key_id="test-key",
+        )
+
+        create_application(settings)
+
+        dynamodb_client = mock_factory_instance.get_dynamodb_client.return_value
+        mock_outbox_repo.assert_called_once_with(
+            dynamodb_client=dynamodb_client,
+            metadata_table_name="test-table",
+            outbox_table_name="test-outbox",
+        )
+        mock_processor.assert_called_once()
+        assert mock_processor.call_args.kwargs["outbox_repo"] == mock_outbox_repo.return_value
+        assert mock_processor.call_args.kwargs["use_outbox_pattern"] is True
 
     @patch("processor.main.AWSClientFactory")
     def test_create_application_connectivity_failure(

@@ -104,7 +104,15 @@ class DynamoDBOutboxRepository(OutboxRepository):
         try:
             log.info("Saving metadata with outbox event (transactional)")
 
+            now = datetime.now(UTC).isoformat()
+            record.updated_at = now
+            if not record.created_at:
+                record.created_at = now
+
             metadata_item = record.to_dynamodb_item()
+            metadata_item["GSI1PK"] = {"S": f"STATUS#{record.status.value}"}
+            metadata_item["GSI1SK"] = {"S": record.timestamp}
+
             outbox_item = outbox_event.to_dynamodb_item()
 
             self._client.transact_write_items(
@@ -113,7 +121,6 @@ class DynamoDBOutboxRepository(OutboxRepository):
                         "Put": {
                             "TableName": self._metadata_table_name,
                             "Item": metadata_item,
-                            "ConditionExpression": "attribute_not_exists(PK) OR attribute_not_exists(SK)",
                         }
                     },
                     {
@@ -136,14 +143,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
 
             if error_code == "TransactionCanceledException":
                 reasons = e.response.get("CancellationReasons", [])
-                log.warning(
-                    "Transaction cancelled",
-                    reasons=[r.get("Code") for r in reasons],
-                )
-
-                if any(r.get("Code") == "ConditionalCheckFailed" for r in reasons):
-                    log.info("Metadata record already exists, likely duplicate event")
-                    return
+                log.warning("Transaction cancelled", reasons=[r.get("Code") for r in reasons])
 
             log.exception("Failed to save with outbox")
             raise StorageError(
