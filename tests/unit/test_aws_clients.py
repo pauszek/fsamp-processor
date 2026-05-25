@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from botocore.config import Config
 
 from processor.infrastructure.aws_clients import (
     DEFAULT_CONFIG,
@@ -56,8 +57,6 @@ class TestAWSClientFactoryInit:
         assert factory._use_fips is False  # FIPS disabled for local
 
     def test_init_with_custom_config(self) -> None:
-        from botocore.config import Config
-
         custom_config = Config(retries={"max_attempts": 5})
 
         factory = AWSClientFactory(config=custom_config)

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import orjson
 import pytest
 from pydantic import ValidationError
 
@@ -264,8 +265,6 @@ class TestSQSMessageWrapper:
     def test_direct_event_extraction(self) -> None:
         event_data = create_valid_event_data()
 
-        import orjson
-
         wrapper = SQSMessageWrapper(
             message_id="msg-123",
             body=orjson.dumps(event_data).decode(),
@@ -277,8 +276,6 @@ class TestSQSMessageWrapper:
 
     def test_sns_wrapped_event_extraction(self) -> None:
         event_data = create_valid_event_data()
-
-        import orjson
 
         sns_notification = {
             "Type": "Notification",

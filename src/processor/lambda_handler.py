@@ -18,6 +18,7 @@ Implements Outbox Pattern for reliable event publishing.
 from __future__ import annotations
 
 import json
+import sys
 import time
 from typing import Any, cast
 
@@ -288,8 +289,6 @@ def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, A
 
 
 if __name__ == "__main__":
-    import sys
-
     sample_event = {
         "Records": [
             {

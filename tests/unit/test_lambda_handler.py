@@ -4,14 +4,16 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from aws_lambda_powertools.utilities.batch import EventType as BatchEventType
+
+import processor.lambda_handler as handler_module
+from processor.domain.events import FileEvent
 
 VALID_KMS_KEY_ID = "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
 
 
 class TestGetFileProcessor:
     def test_get_file_processor_creates_service(self) -> None:
-        import processor.lambda_handler as handler_module
-
         handler_module._file_processor = None
         handler_module._settings = None
 
@@ -47,8 +49,6 @@ class TestGetFileProcessor:
             mock_service_class.assert_called_once()
 
     def test_get_file_processor_returns_cached(self) -> None:
-        import processor.lambda_handler as handler_module
-
         mock_service = MagicMock()
         handler_module._file_processor = mock_service
 
@@ -58,8 +58,6 @@ class TestGetFileProcessor:
         handler_module._file_processor = None
 
     def test_get_file_processor_with_outbox(self) -> None:
-        import processor.lambda_handler as handler_module
-
         handler_module._file_processor = None
         handler_module._settings = None
 
@@ -148,8 +146,6 @@ class TestRecordHandlerLogic:
         assert event_data["event_type"] == "FILE_UPLOADED"
 
     def test_file_event_validation(self, sample_file_event_dict: dict) -> None:
-        from processor.domain.events import FileEvent
-
         event = FileEvent.model_validate(sample_file_event_dict)
 
         assert event.event_type.value == "FILE_UPLOADED"
@@ -158,20 +154,12 @@ class TestRecordHandlerLogic:
 
 class TestLambdaHandlerConstants:
     def test_logger_service_name(self) -> None:
-        import processor.lambda_handler as handler_module
-
         assert handler_module.logger.service == "fsamp-processor"
 
     def test_processor_event_type(self) -> None:
-        from aws_lambda_powertools.utilities.batch import EventType
-
-        import processor.lambda_handler as handler_module
-
-        assert handler_module.processor.event_type == EventType.SQS
+        assert handler_module.processor.event_type == BatchEventType.SQS
 
     def test_global_state_initially_none(self) -> None:
-        import processor.lambda_handler as handler_module
-
         original_processor = handler_module._file_processor
         original_settings = handler_module._settings
 

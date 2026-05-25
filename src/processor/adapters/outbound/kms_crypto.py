@@ -5,6 +5,7 @@ and the Python cryptography library.
 """
 
 import hashlib
+import os
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
@@ -183,8 +184,6 @@ class KMSCryptoProvider(CryptoProvider):
         """
         try:
             plaintext_key, encrypted_key = self.generate_data_key(context)
-
-            import os
 
             nonce = os.urandom(GCM_NONCE_SIZE)
 
@@ -365,8 +364,6 @@ class LocalCryptoProvider(CryptoProvider):
             static_key: Optional static key (32 bytes for AES-256).
                        If not provided, generates a random key.
         """
-        import os
-
         if static_key:
             if len(static_key) != 32:
                 raise ValueError("Static key must be 32 bytes for AES-256")
@@ -384,8 +381,6 @@ class LocalCryptoProvider(CryptoProvider):
         context: dict[str, str] | None = None,
     ) -> tuple[bytes, bytes]:
         """Generate a data key (local, not KMS-backed)."""
-        import os
-
         plaintext_key = os.urandom(32)
 
         encrypted_key = bytes(a ^ b for a, b in zip(plaintext_key, self._master_key * 2))
@@ -394,8 +389,6 @@ class LocalCryptoProvider(CryptoProvider):
 
     def encrypt(self, plaintext: bytes, context: dict[str, str] | None = None) -> bytes:
         """Encrypt using local key."""
-        import os
-
         plaintext_key, encrypted_key = self.generate_data_key(context)
 
         nonce = os.urandom(GCM_NONCE_SIZE)

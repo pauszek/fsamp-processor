@@ -3,7 +3,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+import jsonschema
 import pytest
+from pydantic import ValidationError
 
 from processor.domain.events import (
     SCHEMA_VERSION,
@@ -14,14 +16,6 @@ from processor.domain.events import (
     SecurityContext,
     StorageLocation,
 )
-
-try:
-    from jsonschema import Draft7Validator, validate
-
-    HAS_JSONSCHEMA = True
-except ImportError:
-    HAS_JSONSCHEMA = False
-
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 SCHEMA_PATHS = [
@@ -85,10 +79,9 @@ def sample_file_event() -> FileEvent:
     return _create_valid_event()
 
 
-@pytest.mark.skipif(not HAS_JSONSCHEMA, reason="jsonschema not installed")
 class TestEventSchemaContract:
     def test_schema_is_valid_json_schema(self, event_schema: dict) -> None:
-        Draft7Validator.check_schema(event_schema)
+        jsonschema.Draft7Validator.check_schema(event_schema)
 
     def test_schema_version_matches(self, event_schema: dict) -> None:
         schema_version = event_schema["properties"]["schemaVersion"]["const"]
@@ -100,7 +93,7 @@ class TestEventSchemaContract:
         self, event_schema: dict, sample_file_event: FileEvent
     ) -> None:
         event_json = json.loads(sample_file_event.model_dump_json(by_alias=True, exclude_none=True))
-        validate(instance=event_json, schema=event_schema)
+        jsonschema.validate(instance=event_json, schema=event_schema)
 
     def test_all_event_types_are_valid(self, event_schema: dict) -> None:
         schema_event_types = set(event_schema["properties"]["eventType"]["enum"])
@@ -145,7 +138,7 @@ class TestEventSchemaContract:
     ) -> None:
         event = _create_valid_event(event_type=event_type)
         event_json = json.loads(event.model_dump_json(by_alias=True, exclude_none=True))
-        validate(instance=event_json, schema=event_schema)
+        jsonschema.validate(instance=event_json, schema=event_schema)
         assert event_json["eventType"] == event_type.value
 
 
@@ -184,8 +177,6 @@ class TestFIPSCompliance:
 
 class TestBackwardsCompatibility:
     def test_correlation_id_must_be_uuid(self) -> None:
-        from pydantic import ValidationError
-
         with pytest.raises(ValidationError) as exc_info:
             FileEvent(
                 schema_version=SCHEMA_VERSION,
@@ -215,8 +206,6 @@ class TestBackwardsCompatibility:
         assert "correlation_id" in str(exc_info.value).lower()
 
     def test_legacy_event_without_file_id_rejected(self) -> None:
-        from pydantic import ValidationError
-
         event_data = json.loads(
             _create_valid_event().model_dump_json(by_alias=True, exclude_none=True)
         )
@@ -228,8 +217,6 @@ class TestBackwardsCompatibility:
         assert "fileid" in str(exc_info.value).lower() or "file_id" in str(exc_info.value).lower()
 
     def test_additional_properties_rejected(self) -> None:
-        from pydantic import ValidationError
-
         event_data = {
             "schemaVersion": SCHEMA_VERSION,
             "fileId": str(uuid4()),
@@ -261,8 +248,6 @@ class TestBackwardsCompatibility:
         assert "unknownField" in str(exc_info.value)
 
     def test_unencrypted_files_rejected(self) -> None:
-        from pydantic import ValidationError
-
         with pytest.raises(ValidationError):
             SecurityContext(
                 is_encrypted=False,  # Not allowed
@@ -271,8 +256,6 @@ class TestBackwardsCompatibility:
             )
 
     def test_aes_cbc_rejected(self) -> None:
-        from pydantic import ValidationError
-
         with pytest.raises(ValidationError):
             SecurityContext(
                 is_encrypted=True,
@@ -281,8 +264,6 @@ class TestBackwardsCompatibility:
             )
 
     def test_file_size_max_100mb(self) -> None:
-        from pydantic import ValidationError
-
         with pytest.raises(ValidationError):
             FileMetadata(
                 original_filename="huge.pdf",
@@ -293,10 +274,7 @@ class TestBackwardsCompatibility:
 
 
 class TestSchemaValidation:
-    @pytest.mark.skipif(not HAS_JSONSCHEMA, reason="jsonschema not installed")
     def test_invalid_event_type_rejected(self, event_schema: dict) -> None:
-        from jsonschema import ValidationError as JsonSchemaError
-
         invalid_json = {
             "schemaVersion": "1.1.0",
             "fileId": str(uuid4()),
@@ -321,13 +299,10 @@ class TestSchemaValidation:
             },
         }
 
-        with pytest.raises(JsonSchemaError):
-            validate(instance=invalid_json, schema=event_schema)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance=invalid_json, schema=event_schema)
 
-    @pytest.mark.skipif(not HAS_JSONSCHEMA, reason="jsonschema not installed")
     def test_missing_source_rejected(self, event_schema: dict) -> None:
-        from jsonschema import ValidationError as JsonSchemaError
-
         invalid_json = {
             "schemaVersion": "1.1.0",
             "fileId": str(uuid4()),
@@ -351,17 +326,14 @@ class TestSchemaValidation:
             },
         }
 
-        with pytest.raises(JsonSchemaError):
-            validate(instance=invalid_json, schema=event_schema)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance=invalid_json, schema=event_schema)
 
-    @pytest.mark.skipif(not HAS_JSONSCHEMA, reason="jsonschema not installed")
     def test_missing_file_id_rejected(self, event_schema: dict) -> None:
-        from jsonschema import ValidationError as JsonSchemaError
-
         invalid_json = json.loads(
             _create_valid_event().model_dump_json(by_alias=True, exclude_none=True)
         )
         invalid_json.pop("fileId")
 
-        with pytest.raises(JsonSchemaError):
-            validate(instance=invalid_json, schema=event_schema)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance=invalid_json, schema=event_schema)

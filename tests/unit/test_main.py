@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from processor.config import Settings
 from processor.main import create_application, main
 
 
@@ -47,8 +48,6 @@ class TestCreateApplication:
         mock_crypto,
         mock_factory,
     ) -> None:
-        from processor.config import Settings
-
         mock_factory_instance = MagicMock()
         mock_factory_instance.verify_connectivity.return_value = {
             "s3": True,
@@ -97,8 +96,6 @@ class TestCreateApplication:
         mock_crypto,
         mock_factory,
     ) -> None:
-        from processor.config import Settings
-
         mock_factory_instance = MagicMock()
         mock_factory_instance.verify_connectivity.return_value = {
             "s3": True,
@@ -139,8 +136,6 @@ class TestCreateApplication:
         self,
         mock_factory,
     ) -> None:
-        from processor.config import Settings
-
         mock_factory_instance = MagicMock()
         mock_factory_instance.verify_connectivity.return_value = {
             "s3": False,
@@ -177,8 +172,6 @@ class TestCreateApplication:
         mock_crypto,
         mock_factory,
     ) -> None:
-        from processor.config import Settings
-
         mock_factory_instance = MagicMock()
         mock_factory_instance.verify_connectivity.return_value = {
             "s3": True,
@@ -240,8 +233,6 @@ class TestMain:
         mock_settings,
         mock_create_app,
     ) -> None:
-        from processor.config import Settings
-
         mock_consumer = MagicMock()
         mock_create_app.return_value = mock_consumer
 
@@ -289,8 +280,6 @@ class TestMain:
         mock_settings,
         mock_create_app,
     ) -> None:
-        from processor.config import Settings
-
         mock_create_app.side_effect = RuntimeError("Failed to create app")
 
         mock_settings.return_value = Settings(

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from processor.application.file_processor import FileProcessorService
-from processor.domain.events import EventType, FileEvent
+from processor.domain.events import EventType, FileEvent, FileMetadata
 from processor.domain.exceptions import NonRetryableError, ProcessingError, StorageError
 from processor.domain.models import FileContent, ProcessingStatus
 
@@ -104,8 +104,6 @@ class TestFileProcessorServiceHandle:
         service._outbox.save_with_outbox.assert_called_once()
 
     def test_handle_file_too_large(self, mock_dependencies, sample_file_event: FileEvent) -> None:
-        from processor.domain.events import FileMetadata
-
         large_file_event = FileEvent(
             schema_version=sample_file_event.schema_version,
             file_id=sample_file_event.file_id,

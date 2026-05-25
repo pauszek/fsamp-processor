@@ -5,9 +5,13 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from aws_lambda_powertools.utilities.data_classes.sqs_event import SQSRecord
 
+import processor.lambda_handler as handler_module
 from processor.domain.events import SCHEMA_VERSION, EventType, FileEvent
+from processor.domain.exceptions import NonRetryableError, ProcessingError
 from processor.domain.models import ProcessingResult, ProcessingStatus
+from processor.lambda_handler import lambda_handler, record_handler
 
 SAMPLE_CHECKSUM_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 SAMPLE_KMS_ARN = "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012"
@@ -105,8 +109,6 @@ class TestLambdaHandler:
 
     @patch("processor.lambda_handler.get_file_processor")
     def test_handler_processes_single_message(self, mock_get_processor, mock_processor):
-        from processor.lambda_handler import lambda_handler
-
         mock_get_processor.return_value = mock_processor
 
         event = create_sqs_event([create_file_event_dict()])
@@ -121,8 +123,6 @@ class TestLambdaHandler:
 
     @patch("processor.lambda_handler.get_file_processor")
     def test_handler_processes_batch(self, mock_get_processor, mock_processor):
-        from processor.lambda_handler import lambda_handler
-
         mock_get_processor.return_value = mock_processor
 
         events = [create_file_event_dict(filename=f"file{i}.pdf") for i in range(3)]
@@ -136,9 +136,6 @@ class TestLambdaHandler:
 
     @patch("processor.lambda_handler.get_file_processor")
     def test_handler_reports_partial_batch_failures(self, mock_get_processor, mock_processor):
-        from processor.domain.exceptions import ProcessingError
-        from processor.lambda_handler import lambda_handler
-
         mock_processor.handle.side_effect = [
             ProcessingResult(
                 event_id=str(uuid4()),
@@ -171,8 +168,6 @@ class TestLambdaHandler:
 
     @patch("processor.lambda_handler.get_file_processor")
     def test_handler_unwraps_sns_notification(self, mock_get_processor, mock_processor):
-        from processor.lambda_handler import lambda_handler
-
         mock_get_processor.return_value = mock_processor
 
         inner_event = create_file_event_dict()
@@ -196,10 +191,6 @@ class TestLambdaHandler:
 class TestRecordHandler:
     @patch("processor.lambda_handler.get_file_processor")
     def test_record_handler_parses_event(self, mock_get_processor):
-        from aws_lambda_powertools.utilities.data_classes.sqs_event import SQSRecord
-
-        from processor.lambda_handler import record_handler
-
         mock_processor = MagicMock()
         mock_processor.handle.return_value = ProcessingResult(
             event_id=str(uuid4()),
@@ -234,10 +225,6 @@ class TestRecordHandler:
 
     @patch("processor.lambda_handler.get_file_processor")
     def test_record_handler_records_safe_file_metric(self, mock_get_processor):
-        from aws_lambda_powertools.utilities.data_classes.sqs_event import SQSRecord
-
-        from processor.lambda_handler import record_handler
-
         mock_processor = MagicMock()
         mock_processor.handle.return_value = ProcessingResult(
             event_id=str(uuid4()),
@@ -270,10 +257,6 @@ class TestRecordHandler:
 
     @patch("processor.lambda_handler.get_file_processor")
     def test_record_handler_records_unsafe_file_metric(self, mock_get_processor):
-        from aws_lambda_powertools.utilities.data_classes.sqs_event import SQSRecord
-
-        from processor.lambda_handler import record_handler
-
         mock_processor = MagicMock()
         mock_processor.handle.return_value = ProcessingResult(
             event_id=str(uuid4()),
@@ -306,11 +289,6 @@ class TestRecordHandler:
 
     @patch("processor.lambda_handler.get_file_processor")
     def test_record_handler_returns_skipped_for_non_retryable_error(self, mock_get_processor):
-        from aws_lambda_powertools.utilities.data_classes.sqs_event import SQSRecord
-
-        from processor.domain.exceptions import NonRetryableError
-        from processor.lambda_handler import record_handler
-
         mock_processor = MagicMock()
         mock_processor.handle.side_effect = NonRetryableError("permanent validation failure")
         mock_get_processor.return_value = mock_processor
@@ -342,8 +320,6 @@ class TestRecordHandler:
 
 class TestColdStart:
     def test_file_processor_singleton(self):
-        import processor.lambda_handler as handler_module
-
         handler_module._file_processor = None
         handler_module._settings = None
 
