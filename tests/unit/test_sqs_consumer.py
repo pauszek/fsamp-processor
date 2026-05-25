@@ -1,5 +1,7 @@
-from datetime import UTC
+import json
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from botocore.exceptions import ClientError
@@ -290,10 +292,6 @@ class TestSQSConsumerSignalHandler:
 class TestSQSConsumerProcessMessage:
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_process_message_success(self, mock_signal) -> None:
-        import json
-        from datetime import datetime
-        from uuid import uuid4
-
         client = MagicMock()
         handler = MagicMock()
 
@@ -343,8 +341,6 @@ class TestSQSConsumerProcessMessage:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_process_message_validation_error(self, mock_signal) -> None:
-        import json
-
         client = MagicMock()
         handler = MagicMock()
 
@@ -369,10 +365,6 @@ class TestSQSConsumerProcessMessage:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_process_message_non_retryable_error(self, mock_signal) -> None:
-        import json
-        from datetime import datetime
-        from uuid import uuid4
-
         client = MagicMock()
         handler = MagicMock()
         handler.side_effect = NonRetryableError("File too large")
@@ -422,10 +414,6 @@ class TestSQSConsumerProcessMessage:
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_process_message_unexpected_error(self, mock_signal) -> None:
-        import json
-        from datetime import datetime
-        from uuid import uuid4
-
         client = MagicMock()
         handler = MagicMock()
         handler.side_effect = RuntimeError("Unexpected error")

@@ -15,6 +15,7 @@ from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID
 
+import orjson
 from pydantic import BaseModel, ConfigDict, Field
 
 SCHEMA_VERSION = "1.1.0"
@@ -286,8 +287,6 @@ class SQSMessageWrapper(BaseModel):
         Extract FileEvent from SQS message body.
         Handles both direct events and SNS-wrapped events.
         """
-        import orjson
-
         body_data = orjson.loads(self.body)
 
         if "Type" in body_data and body_data.get("Type") == "Notification":

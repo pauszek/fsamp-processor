@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import os
+import secrets
 import ssl
 
 import pytest
@@ -95,8 +96,6 @@ class TestSecureRandomness:
         assert random_bytes != b"\x00" * 32
 
     def test_secrets_module_available(self) -> None:
-        import secrets
-
         token = secrets.token_hex(32)
         assert len(token) == 64  # 32 bytes = 64 hex chars
 

@@ -25,6 +25,7 @@ Benefits of Outbox Pattern:
 
 import json
 import os
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from aws_lambda_powertools import Logger, Metrics, Tracer
@@ -242,8 +243,6 @@ def publish_to_sns(outbox_event: OutboxEvent) -> str:
 @tracer.capture_method
 def mark_event_published(outbox_event: OutboxEvent) -> None:
     """Mark outbox event as published in DynamoDB."""
-    from datetime import UTC, datetime, timedelta
-
     dynamodb = get_dynamodb_client()
     now = datetime.now(UTC).isoformat()
     ttl = int((datetime.now(UTC) + timedelta(hours=24)).timestamp())

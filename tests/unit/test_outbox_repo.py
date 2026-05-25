@@ -74,7 +74,7 @@ class TestDynamoDBOutboxRepositorySaveWithOutbox:
         call_kwargs = repo._client.transact_write_items.call_args.kwargs
         assert len(call_kwargs["TransactItems"]) == 2
 
-    def test_save_with_outbox_duplicate(
+    def test_save_with_outbox_transaction_cancelled(
         self,
         repo: DynamoDBOutboxRepository,
         metadata_record: MetadataRecord,
@@ -88,7 +88,8 @@ class TestDynamoDBOutboxRepositorySaveWithOutbox:
             "TransactWriteItems",
         )
 
-        repo.save_with_outbox(metadata_record, outbox_event)
+        with pytest.raises(StorageError):
+            repo.save_with_outbox(metadata_record, outbox_event)
 
     def test_save_with_outbox_error(
         self,

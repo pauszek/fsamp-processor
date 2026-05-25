@@ -1,4 +1,5 @@
 import os
+import uuid
 from collections.abc import Generator
 
 import boto3
@@ -117,8 +118,6 @@ def localstack_bucket(localstack_s3_client: boto3.client) -> str:
 
 @pytest.fixture
 def localstack_queue_url(localstack_sqs_client: boto3.client) -> str:
-    import uuid
-
     queue_name = f"test-queue-{uuid.uuid4().hex[:8]}"
 
     response = localstack_sqs_client.create_queue(
@@ -133,8 +132,6 @@ def localstack_queue_url(localstack_sqs_client: boto3.client) -> str:
 
 @pytest.fixture
 def localstack_topic_arn(localstack_sns_client: boto3.client) -> str:
-    import uuid
-
     topic_name = f"test-topic-{uuid.uuid4().hex[:8]}"
 
     response = localstack_sns_client.create_topic(Name=topic_name)
@@ -143,8 +140,6 @@ def localstack_topic_arn(localstack_sns_client: boto3.client) -> str:
 
 @pytest.fixture
 def localstack_table_name(localstack_dynamodb_client: boto3.client) -> str:
-    import uuid
-
     table_name = f"test-table-{uuid.uuid4().hex[:8]}"
 
     try:

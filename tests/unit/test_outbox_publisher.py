@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from processor import outbox_publisher
 from processor.domain.models import OutboxEvent, OutboxEventType, OutboxStatus
 
 
@@ -11,7 +12,6 @@ class TestOutboxPublisherHelpers:
     def setup_env(self) -> None:
         os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
         os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
-        from processor import outbox_publisher
 
         outbox_publisher._sns_client = None
         outbox_publisher._dynamodb_client = None
@@ -22,8 +22,6 @@ class TestOutboxPublisherHelpers:
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_get_sns_client_singleton(self) -> None:
-        from processor import outbox_publisher
-
         mock_client = MagicMock()
         mock_factory = MagicMock()
         mock_factory.get_sns_client.return_value = mock_client
@@ -36,8 +34,6 @@ class TestOutboxPublisherHelpers:
         mock_factory.get_sns_client.assert_called_once()
 
     def test_get_dynamodb_client_singleton(self) -> None:
-        from processor import outbox_publisher
-
         mock_client = MagicMock()
         mock_factory = MagicMock()
         mock_factory.get_dynamodb_client.return_value = mock_client
@@ -50,8 +46,6 @@ class TestOutboxPublisherHelpers:
         mock_factory.get_dynamodb_client.assert_called_once()
 
     def test_get_aws_factory_initializes_with_settings_and_enforces_fips(self) -> None:
-        from processor import outbox_publisher
-
         settings = MagicMock(
             should_require_fips=True,
             aws_region="us-east-1",
@@ -92,8 +86,6 @@ class TestOutboxPublisherRecordHandlerLogic:
         assert not new_image
 
     def test_record_handler_skips_non_insert_event(self) -> None:
-        from processor import outbox_publisher
-
         record = MagicMock()
         record.event_name = "MODIFY"
         record.event_id = "stream-event-1"
@@ -103,8 +95,6 @@ class TestOutboxPublisherRecordHandlerLogic:
         assert result == {"status": "skipped", "reason": "not_insert"}
 
     def test_record_handler_skips_missing_new_image(self) -> None:
-        from processor import outbox_publisher
-
         record = MagicMock()
         record.event_name = "INSERT"
         record.event_id = "stream-event-1"
@@ -115,8 +105,6 @@ class TestOutboxPublisherRecordHandlerLogic:
         assert result == {"status": "skipped", "reason": "no_new_image"}
 
     def test_record_handler_publishes_pending_event(self) -> None:
-        from processor import outbox_publisher
-
         outbox_event = OutboxEvent.for_file_processed(
             file_id="file-123",
             correlation_id="corr-123",
@@ -145,8 +133,6 @@ class TestOutboxPublisherRecordHandlerLogic:
         mark_event_published.assert_called_once()
 
     def test_record_handler_skips_non_pending_wire_status(self) -> None:
-        from processor import outbox_publisher
-
         record = MagicMock()
         record.event_name = "INSERT"
         record.event_id = "stream-event-1"
@@ -161,8 +147,6 @@ class TestOutboxPublisherRecordHandlerLogic:
         }
 
     def test_record_handler_marks_wire_event_failed_when_publish_fails(self) -> None:
-        from processor import outbox_publisher
-
         outbox_event = OutboxEvent.for_file_processed(
             file_id="file-123",
             correlation_id="corr-123",
@@ -190,8 +174,6 @@ class TestOutboxPublisherRecordHandlerLogic:
         )
 
     def test_record_handler_suppresses_mark_failed_errors(self) -> None:
-        from processor import outbox_publisher
-
         outbox_event = OutboxEvent.for_file_processed(
             file_id="file-123",
             correlation_id="corr-123",
@@ -217,8 +199,6 @@ class TestOutboxPublisherRecordHandlerLogic:
             outbox_publisher.record_handler(record)
 
     def test_record_handler_raises_original_error_without_event_id(self) -> None:
-        from processor import outbox_publisher
-
         record = MagicMock()
         record.event_name = "INSERT"
         record.event_id = "stream-event-1"
@@ -250,8 +230,6 @@ class TestOutboxPublisherPublishToSNS:
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_publish_to_sns_success(self) -> None:
-        from processor import outbox_publisher
-
         mock_sns = MagicMock()
         mock_sns.publish.return_value = {"MessageId": "test-message-id"}
 
@@ -270,8 +248,6 @@ class TestOutboxPublisherPublishToSNS:
         mock_sns.publish.assert_called_once()
 
     def test_publish_to_sns_adds_file_context_attributes(self) -> None:
-        from processor import outbox_publisher
-
         mock_sns = MagicMock()
         mock_sns.publish.return_value = {"MessageId": "test-message-id"}
 
@@ -297,8 +273,6 @@ class TestOutboxPublisherPublishToSNS:
         assert message_attributes["correlationId"]["StringValue"] == "corr-123"
 
     def test_publish_to_sns_wraps_plain_payload_in_outbox_envelope(self) -> None:
-        from processor import outbox_publisher
-
         mock_sns = MagicMock()
         mock_sns.publish.return_value = {"MessageId": "test-message-id"}
 
@@ -329,8 +303,6 @@ class TestOutboxPublisherMarkEventPublished:
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_mark_event_published(self) -> None:
-        from processor import outbox_publisher
-
         outbox_publisher._settings = None
         mock_dynamodb = MagicMock()
 
@@ -360,8 +332,6 @@ class TestOutboxPublisherMarkEventFailed:
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_mark_event_failed(self) -> None:
-        from processor import outbox_publisher
-
         outbox_publisher._settings = None
         mock_dynamodb = MagicMock()
 
@@ -373,8 +343,6 @@ class TestOutboxPublisherMarkEventFailed:
         assert ":error" in call_kwargs["ExpressionAttributeValues"]
 
     def test_mark_event_failed_truncates_long_error(self) -> None:
-        from processor import outbox_publisher
-
         outbox_publisher._settings = None
         mock_dynamodb = MagicMock()
         long_error = "x" * 2000
@@ -399,32 +367,24 @@ class TestOutboxPublisherLambdaHandler:
         os.environ.pop("POWERTOOLS_SERVICE_NAME", None)
 
     def test_lambda_handler_env_validation(self) -> None:
-        from processor import outbox_publisher
-
         outbox_publisher._settings = None
         assert os.environ.get("SNS_TOPIC_ARN", "") == outbox_publisher.get_sns_topic_arn()
 
         assert os.environ.get("OUTBOX_TABLE_NAME", "") == outbox_publisher.get_outbox_table_name()
 
     def test_lambda_handler_rejects_missing_sns_topic(self) -> None:
-        from processor import outbox_publisher
-
         os.environ["SNS_TOPIC_ARN"] = ""
 
         with pytest.raises(ValueError, match="SNS_TOPIC_ARN"):
             outbox_publisher.lambda_handler({"Records": []}, MagicMock())
 
     def test_lambda_handler_rejects_missing_outbox_table(self) -> None:
-        from processor import outbox_publisher
-
         os.environ["OUTBOX_TABLE_NAME"] = ""
 
         with pytest.raises(ValueError, match="OUTBOX_TABLE_NAME"):
             outbox_publisher.lambda_handler({"Records": []}, MagicMock())
 
     def test_lambda_handler_delegates_to_batch_processor(self) -> None:
-        from processor import outbox_publisher
-
         with patch.object(
             outbox_publisher,
             "process_partial_response",
@@ -436,13 +396,9 @@ class TestOutboxPublisherLambdaHandler:
         process_partial_response.assert_called_once()
 
     def test_lambda_handler_constants(self) -> None:
-        from processor import outbox_publisher
-
         assert outbox_publisher.MAX_RETRY_COUNT >= 0
 
     def test_settings_values_take_precedence_over_environment(self) -> None:
-        from processor import outbox_publisher
-
         outbox_publisher._settings = MagicMock(
             sns_topic_arn="arn:aws:sns:us-west-2:123456789012:settings-topic",
             outbox_table_name="settings-outbox",
@@ -469,8 +425,6 @@ class TestOutboxPublisherRetryHandler:
         os.environ.pop("MAX_RETRY_COUNT", None)
 
     def test_retry_handler_no_failed_events(self) -> None:
-        from processor import outbox_publisher
-
         mock_dynamodb = MagicMock()
         mock_dynamodb.query.return_value = {"Items": []}
 
@@ -484,8 +438,6 @@ class TestOutboxPublisherRetryHandler:
         assert result["body"]["total_processed"] == 0
 
     def test_retry_handler_republishes_failed_events(self) -> None:
-        from processor import outbox_publisher
-
         outbox_event = OutboxEvent.for_file_processed(
             file_id="file-123",
             correlation_id="corr-123",
@@ -515,8 +467,6 @@ class TestOutboxPublisherRetryHandler:
         mark_event_published.assert_called_once()
 
     def test_retry_handler_counts_failed_retry_attempts(self) -> None:
-        from processor import outbox_publisher
-
         outbox_event = OutboxEvent.for_file_processed(
             file_id="file-123",
             correlation_id="corr-123",
