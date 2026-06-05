@@ -107,7 +107,7 @@ class FileProcessorService:
             file_id=event.file_id_str,
             correlation_id=event.correlation_id_str,
             event_type=event.event_type.value,
-            filename=event.file_metadata.original_filename,
+            filename=event.file_metadata.redacted_filename,
         )
 
         started_at = datetime.now(UTC)

@@ -172,7 +172,7 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
 
         logger.info(
             "Processing file event",
-            original_filename=file_event.file_metadata.original_filename,
+            filename=file_event.file_metadata.redacted_filename,
             file_size_bytes=file_size_bytes,
         )
 
@@ -296,7 +296,7 @@ if __name__ == "__main__":
                 "receiptHandle": "test-receipt",
                 "body": json.dumps(
                     {
-                        "schema_version": "1.1.0",
+                        "schema_version": "1.1.1",
                         "file_id": "550e8400-e29b-41d4-a716-446655440000",
                         "event_id": "550e8400-e29b-41d4-a716-446655440001",
                         "event_type": "FILE_UPLOADED",

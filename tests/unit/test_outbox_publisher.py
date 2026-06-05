@@ -119,6 +119,9 @@ class TestOutboxPublisherRecordHandlerLogic:
         record.dynamodb.new_image = outbox_event.to_dynamodb_item()
 
         with (
+            patch.object(
+                outbox_publisher, "claim_event_for_publish", return_value=True
+            ) as claim_event,
             patch.object(outbox_publisher, "publish_to_sns") as publish_to_sns,
             patch.object(outbox_publisher, "mark_event_published") as mark_event_published,
         ):
@@ -129,8 +132,36 @@ class TestOutboxPublisherRecordHandlerLogic:
             "event_id": outbox_event.event_id,
             "event_type": outbox_event.event_type.value,
         }
+        claim_event.assert_called_once_with(outbox_event)
         publish_to_sns.assert_called_once()
         mark_event_published.assert_called_once()
+
+    def test_record_handler_skips_already_claimed_event(self) -> None:
+        outbox_event = OutboxEvent.for_file_processed(
+            file_id="file-123",
+            correlation_id="corr-123",
+            file_hash="a" * 64,
+            is_safe=True,
+            bucket_name="bucket",
+            object_key="object",
+        )
+        record = MagicMock()
+        record.event_name = "INSERT"
+        record.event_id = "stream-event-1"
+        record.dynamodb.new_image = outbox_event.to_dynamodb_item()
+
+        with (
+            patch.object(outbox_publisher, "claim_event_for_publish", return_value=False),
+            patch.object(outbox_publisher, "publish_to_sns") as publish_to_sns,
+        ):
+            result = outbox_publisher.record_handler(record)
+
+        assert result == {
+            "status": "skipped",
+            "reason": "already_claimed",
+            "event_id": outbox_event.event_id,
+        }
+        publish_to_sns.assert_not_called()
 
     def test_record_handler_skips_non_pending_wire_status(self) -> None:
         record = MagicMock()
@@ -161,6 +192,7 @@ class TestOutboxPublisherRecordHandlerLogic:
         record.dynamodb.new_image = outbox_event.to_dynamodb_item()
 
         with (
+            patch.object(outbox_publisher, "claim_event_for_publish", return_value=True),
             patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
             patch.object(outbox_publisher, "mark_event_failed") as mark_event_failed,
             pytest.raises(RuntimeError, match="SNS down"),
@@ -188,6 +220,7 @@ class TestOutboxPublisherRecordHandlerLogic:
         record.dynamodb.new_image = outbox_event.to_dynamodb_item()
 
         with (
+            patch.object(outbox_publisher, "claim_event_for_publish", return_value=True),
             patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
             patch.object(
                 outbox_publisher,
@@ -203,7 +236,7 @@ class TestOutboxPublisherRecordHandlerLogic:
         record.event_name = "INSERT"
         record.event_id = "stream-event-1"
         record.dynamodb.new_image = {
-            "eventType": {"S": "FILE_PROCESSED"},
+            "eventType": {"S": "ANALYSIS_COMPLETED"},
             "aggregateId": {"S": "file-123"},
             "payload": {"S": "{}"},
             "status": {"S": OutboxStatus.PENDING.value},
@@ -211,6 +244,7 @@ class TestOutboxPublisherRecordHandlerLogic:
         }
 
         with (
+            patch.object(outbox_publisher, "claim_event_for_publish", return_value=True),
             patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
             patch.object(outbox_publisher, "mark_event_failed") as mark_event_failed,
             pytest.raises(KeyError),
@@ -235,7 +269,7 @@ class TestOutboxPublisherPublishToSNS:
 
         outbox_event = OutboxEvent(
             event_id="test-event-id",
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id="file-123",
             aggregate_type="FileProcessing",
             payload={"file_id": "file-123"},
@@ -253,12 +287,12 @@ class TestOutboxPublisherPublishToSNS:
 
         outbox_event = OutboxEvent(
             event_id="test-event-id",
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id="file-123",
             aggregate_type="FileProcessing",
             payload={
-                "schemaVersion": "1.1.0",
-                "eventType": "FILE_PROCESSED",
+                "schemaVersion": "1.1.1",
+                "eventType": "ANALYSIS_COMPLETED",
                 "fileId": "file-123",
                 "correlationId": "corr-123",
             },
@@ -271,6 +305,9 @@ class TestOutboxPublisherPublishToSNS:
         message_attributes = mock_sns.publish.call_args.kwargs["MessageAttributes"]
         assert message_attributes["fileId"]["StringValue"] == "file-123"
         assert message_attributes["correlationId"]["StringValue"] == "corr-123"
+        # Idempotency key attribute lets downstream consumers deduplicate
+        # at-least-once deliveries from SNS standard topics.
+        assert message_attributes["idempotencyKey"]["StringValue"] == "test-event-id"
 
     def test_publish_to_sns_wraps_plain_payload_in_outbox_envelope(self) -> None:
         mock_sns = MagicMock()
@@ -278,7 +315,7 @@ class TestOutboxPublisherPublishToSNS:
 
         outbox_event = OutboxEvent(
             event_id="test-event-id",
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id="file-123",
             aggregate_type="FileProcessing",
             payload={"fileId": "file-123"},
@@ -302,13 +339,58 @@ class TestOutboxPublisherMarkEventPublished:
         os.environ.pop("SNS_TOPIC_ARN", None)
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
+    def test_claim_event_for_publish_moves_pending_to_publishing(self) -> None:
+        outbox_publisher._settings = None
+        mock_dynamodb = MagicMock()
+
+        outbox_event = OutboxEvent(
+            event_id="test-event-id",
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
+            aggregate_id="file-123",
+            aggregate_type="FileProcessing",
+            payload={"file_id": "file-123"},
+        )
+
+        with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
+            result = outbox_publisher.claim_event_for_publish(outbox_event)
+
+        assert result is True
+        call_kwargs = mock_dynamodb.update_item.call_args.kwargs
+        assert call_kwargs["ConditionExpression"] == "#status = :expected_status"
+        values = call_kwargs["ExpressionAttributeValues"]
+        assert values[":publishing"]["S"] == OutboxStatus.PUBLISHING.value
+        assert values[":expected_status"]["S"] == OutboxStatus.PENDING.value
+
+    def test_claim_event_for_publish_returns_false_when_not_claimable(self) -> None:
+        outbox_publisher._settings = None
+
+        class _ConditionalCheckFailedError(Exception):
+            pass
+
+        mock_dynamodb = MagicMock()
+        mock_dynamodb.exceptions.ConditionalCheckFailedException = _ConditionalCheckFailedError
+        mock_dynamodb.update_item.side_effect = _ConditionalCheckFailedError("already claimed")
+
+        outbox_event = OutboxEvent(
+            event_id="duplicate-event-id",
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
+            aggregate_id="file-456",
+            aggregate_type="FileProcessing",
+            payload={"file_id": "file-456"},
+        )
+
+        with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
+            result = outbox_publisher.claim_event_for_publish(outbox_event)
+
+        assert result is False
+
     def test_mark_event_published(self) -> None:
         outbox_publisher._settings = None
         mock_dynamodb = MagicMock()
 
         outbox_event = OutboxEvent(
             event_id="test-event-id",
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id="file-123",
             aggregate_type="FileProcessing",
             payload={"file_id": "file-123"},
@@ -320,6 +402,37 @@ class TestOutboxPublisherMarkEventPublished:
         mock_dynamodb.update_item.assert_called_once()
         call_kwargs = mock_dynamodb.update_item.call_args.kwargs
         assert call_kwargs["TableName"] == "test-outbox"
+        assert "ConditionExpression" in call_kwargs
+        assert (
+            call_kwargs["ExpressionAttributeValues"][":publishing"]["S"]
+            == OutboxStatus.PUBLISHING.value
+        )
+
+    def test_mark_event_published_is_idempotent_when_already_published(self) -> None:
+        """Conditional update must swallow ConditionalCheckFailedException
+        so DynamoDB Streams retries do not surface as Lambda errors."""
+        outbox_publisher._settings = None
+
+        class _ConditionalCheckFailedError(Exception):
+            pass
+
+        mock_dynamodb = MagicMock()
+        mock_dynamodb.exceptions.ConditionalCheckFailedException = _ConditionalCheckFailedError
+        mock_dynamodb.update_item.side_effect = _ConditionalCheckFailedError("already published")
+
+        outbox_event = OutboxEvent(
+            event_id="duplicate-event-id",
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
+            aggregate_id="file-456",
+            aggregate_type="FileProcessing",
+            payload={"file_id": "file-456"},
+        )
+
+        with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
+            # Must not raise: duplicate deliveries are expected at-least-once
+            outbox_publisher.mark_event_published(outbox_event)
+
+        mock_dynamodb.update_item.assert_called_once()
 
 
 class TestOutboxPublisherMarkEventFailed:
@@ -448,10 +561,16 @@ class TestOutboxPublisherRetryHandler:
         )
         outbox_event.mark_failed("temporary")
         mock_dynamodb = MagicMock()
-        mock_dynamodb.query.return_value = {"Items": [outbox_event.to_dynamodb_item()]}
+        mock_dynamodb.query.side_effect = [
+            {"Items": [outbox_event.to_dynamodb_item()]},
+            {"Items": []},
+        ]
 
         with (
             patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb),
+            patch.object(
+                outbox_publisher, "claim_event_for_publish", return_value=True
+            ) as claim_event,
             patch.object(outbox_publisher, "publish_to_sns") as publish_to_sns,
             patch.object(outbox_publisher, "mark_event_published") as mark_event_published,
         ):
@@ -462,7 +581,7 @@ class TestOutboxPublisherRetryHandler:
             "failure_count": 0,
             "total_processed": 1,
         }
-        mock_dynamodb.update_item.assert_called_once()
+        claim_event.assert_called_once_with(outbox_event, expected_status=OutboxStatus.FAILED)
         publish_to_sns.assert_called_once()
         mark_event_published.assert_called_once()
 
@@ -477,10 +596,14 @@ class TestOutboxPublisherRetryHandler:
         )
         outbox_event.mark_failed("temporary")
         mock_dynamodb = MagicMock()
-        mock_dynamodb.query.return_value = {"Items": [outbox_event.to_dynamodb_item()]}
+        mock_dynamodb.query.side_effect = [
+            {"Items": [outbox_event.to_dynamodb_item()]},
+            {"Items": []},
+        ]
 
         with (
             patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb),
+            patch.object(outbox_publisher, "claim_event_for_publish", return_value=True),
             patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
         ):
             result = outbox_publisher.retry_handler({}, MagicMock())
@@ -490,3 +613,37 @@ class TestOutboxPublisherRetryHandler:
             "failure_count": 1,
             "total_processed": 1,
         }
+
+    def test_retry_handler_recovers_stale_publishing_events(self) -> None:
+        outbox_event = OutboxEvent.for_file_processed(
+            file_id="file-123",
+            correlation_id="corr-123",
+            file_hash="a" * 64,
+            is_safe=True,
+            bucket_name="bucket",
+            object_key="object",
+        )
+        outbox_event.status = OutboxStatus.PUBLISHING
+        mock_dynamodb = MagicMock()
+        mock_dynamodb.query.side_effect = [
+            {"Items": []},
+            {"Items": [outbox_event.to_dynamodb_item()]},
+        ]
+
+        with (
+            patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb),
+            patch.object(
+                outbox_publisher, "claim_event_for_publish", return_value=True
+            ) as claim_event,
+            patch.object(outbox_publisher, "publish_to_sns") as publish_to_sns,
+            patch.object(outbox_publisher, "mark_event_published") as mark_event_published,
+        ):
+            result = outbox_publisher.retry_handler({}, MagicMock())
+
+        assert result["body"]["success_count"] == 1
+        claim_event.assert_called_once_with(
+            outbox_event,
+            expected_status=OutboxStatus.PUBLISHING,
+        )
+        publish_to_sns.assert_called_once()
+        mark_event_published.assert_called_once()

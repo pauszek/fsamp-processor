@@ -24,8 +24,8 @@ FROM python:3.14-slim-bookworm AS production
 ARG REQUIRE_FIPS_PROVIDER=true
 
 LABEL maintainer="Pauszek <pauszek@github.io>"
-LABEL org.opencontainers.image.title="FSAMP Processor"
-LABEL org.opencontainers.image.description="Event-driven file processor with a FIPS 140-3-oriented security posture"
+LABEL org.opencontainers.image.title="FSAMP Processor Dev Runtime"
+LABEL org.opencontainers.image.description="Local/dev processor image. Production FIPS runtime uses Dockerfile.lambda on AL2023."
 LABEL org.opencontainers.image.version="0.1.0"
 
 RUN groupadd --gid 1000 appgroup && \

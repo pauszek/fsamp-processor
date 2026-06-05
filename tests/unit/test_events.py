@@ -115,6 +115,17 @@ class TestFileMetadata:
         with pytest.raises(ValidationError):
             create_valid_file_metadata(checksum_sha256="not-a-valid-sha256")
 
+    def test_redacted_filename_preserves_length_and_extension_only(self) -> None:
+        metadata = create_valid_file_metadata(original_filename="Jane_Doe_tax_return.pdf")
+
+        assert metadata.redacted_filename == "<redacted len=23 ext=.pdf>"
+        assert "Jane" not in metadata.redacted_filename
+
+    def test_redacted_filename_without_extension(self) -> None:
+        metadata = create_valid_file_metadata(original_filename="README")
+
+        assert metadata.redacted_filename == "<redacted len=6 ext=>"
+
 
 class TestStorageLocation:
     def test_valid_location(self) -> None:

@@ -27,6 +27,7 @@ class OutboxStatus(StrEnum):
     """Status of outbox event for reliable publishing."""
 
     PENDING = "PENDING"
+    PUBLISHING = "PUBLISHING"
     PUBLISHED = "PUBLISHED"
     FAILED = "FAILED"
 
@@ -35,10 +36,9 @@ class OutboxEventType(StrEnum):
     """Types of events in the outbox."""
 
     FILE_UPLOADED = "FILE_UPLOADED"
-    FILE_PROCESSED = "FILE_PROCESSED"
-    FILE_FAILED = "FILE_FAILED"
-    FILE_SCAN_COMPLETED = "FILE_SCAN_COMPLETED"
-    FILE_QUARANTINED = "FILE_QUARANTINED"
+    FILE_SCANNED = "FILE_SCANNED"
+    ANALYSIS_COMPLETED = "ANALYSIS_COMPLETED"
+    PROCESSING_FAILED = "PROCESSING_FAILED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,7 +308,7 @@ class OutboxEvent:
     ) -> OutboxEvent:
         """Create event for successful file processing."""
         return cls.create(
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id=file_id,
             payload={
                 "fileId": file_id,
@@ -331,7 +331,7 @@ class OutboxEvent:
     ) -> OutboxEvent:
         """Create event for failed file processing."""
         return cls.create(
-            event_type=OutboxEventType.FILE_FAILED,
+            event_type=OutboxEventType.PROCESSING_FAILED,
             aggregate_id=file_id,
             payload={
                 "fileId": file_id,
@@ -352,11 +352,12 @@ class OutboxEvent:
     ) -> OutboxEvent:
         """Create event for quarantined (unsafe) file."""
         return cls.create(
-            event_type=OutboxEventType.FILE_QUARANTINED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id=file_id,
             payload={
                 "fileId": file_id,
                 "correlationId": correlation_id,
+                "isSafe": False,
                 "reason": reason,
                 "findings": findings,
                 "quarantinedAt": datetime.now(UTC).isoformat(),

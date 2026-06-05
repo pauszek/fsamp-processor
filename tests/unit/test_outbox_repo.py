@@ -56,7 +56,7 @@ class TestDynamoDBOutboxRepositorySaveWithOutbox:
     def outbox_event(self) -> OutboxEvent:
         return OutboxEvent(
             event_id="event-789",
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id="file-123",
             aggregate_type="FileProcessing",
             payload={"file_id": "file-123"},
@@ -123,7 +123,7 @@ class TestDynamoDBOutboxRepositoryGetPendingEvents:
                     "PK": {"S": "OUTBOX#FileProcessing"},
                     "SK": {"S": "EVENT#event-1"},
                     "eventId": {"S": "event-1"},
-                    "eventType": {"S": "FILE_PROCESSED"},
+                    "eventType": {"S": "ANALYSIS_COMPLETED"},
                     "aggregateId": {"S": "file-1"},
                     "aggregateType": {"S": "FileProcessing"},
                     "payload": {"S": '{"file_id": "file-1"}'},
@@ -242,7 +242,7 @@ class TestDynamoDBOutboxRepositoryGetFailedEvents:
                     "PK": {"S": "OUTBOX#FileProcessing"},
                     "SK": {"S": "EVENT#event-1"},
                     "eventId": {"S": "event-1"},
-                    "eventType": {"S": "FILE_PROCESSED"},
+                    "eventType": {"S": "ANALYSIS_COMPLETED"},
                     "aggregateId": {"S": "file-1"},
                     "aggregateType": {"S": "FileProcessing"},
                     "payload": {"S": '{"file_id": "file-1"}'},
@@ -330,7 +330,7 @@ class TestDynamoDBOutboxRepositoryUpdateMetadataWithOutbox:
     def outbox_event(self) -> OutboxEvent:
         return OutboxEvent(
             event_id="event-789",
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id="file-123",
             aggregate_type="FileProcessing",
             payload={"file_id": "file-123"},
