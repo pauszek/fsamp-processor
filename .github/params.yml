@@ -22,6 +22,7 @@ docker:
   image-name: fsamp-processor
   dockerfile: Dockerfile.lambda
   registry: ghcr.io
+  platforms: linux/amd64
 
 sonar:
   enabled: true
