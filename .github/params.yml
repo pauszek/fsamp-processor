@@ -22,7 +22,8 @@ docker:
   image-name: fsamp-processor
   dockerfile: Dockerfile.lambda
   registry: ghcr.io
-  platforms: linux/amd64
+  platforms: linux/arm64
+  runner: ubuntu-24.04-arm
 
 sonar:
   enabled: true
