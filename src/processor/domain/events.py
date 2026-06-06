@@ -1,5 +1,5 @@
 """
-Event models matching the FSAMP event.schema.json specification v1.1.1.
+Event models matching the FSAMP event.schema.json specification v1.1.2.
 These are the core domain events flowing through the system.
 
 FIPS 140-3-oriented constraints:
@@ -18,7 +18,7 @@ from uuid import UUID
 import orjson
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = "1.1.1"
+SCHEMA_VERSION = "1.1.2"
 
 
 def redact_filename_for_logs(original: str | None) -> str:
@@ -174,7 +174,7 @@ class SecurityContext(BaseModel):
 class FileEvent(BaseModel):
     """
     Standard event definition for FSAMP platform file processing flow.
-    Schema version: 1.1.1
+    Schema version: 1.1.2
 
     This is the main event schema used for inter-service communication.
     Includes constraints used by the FIPS 140-3-oriented security posture.
@@ -187,7 +187,7 @@ class FileEvent(BaseModel):
     )
 
     schema_version: Annotated[
-        Literal["1.1.1"],
+        Literal["1.1.2"],
         Field(
             alias="schemaVersion",
             description="Schema version for forward compatibility",

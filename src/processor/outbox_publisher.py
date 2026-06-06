@@ -458,6 +458,7 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
     failure_count = 0
 
     for item in items:
+        outbox_event: OutboxEvent | None = None
         try:
             outbox_event = OutboxEvent.from_dynamodb_item(item)
 
@@ -470,9 +471,15 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
             success_count += 1
             logger.info(f"Successfully retried event {outbox_event.event_id}")
 
-        except Exception:
+        except Exception as exc:
             failure_count += 1
             logger.exception("Failed to retry event", item_pk=item.get("PK", {}).get("S"))
+            if outbox_event is not None:
+                mark_event_failed(
+                    outbox_event.event_id,
+                    str(exc),
+                    aggregate_type=outbox_event.aggregate_type,
+                )
 
     metrics.add_metric(name="EventsRetried", unit=MetricUnit.Count, value=success_count)
     metrics.add_metric(name="EventsRetryFailed", unit=MetricUnit.Count, value=failure_count)

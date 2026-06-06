@@ -291,7 +291,7 @@ class TestOutboxPublisherPublishToSNS:
             aggregate_id="file-123",
             aggregate_type="FileProcessing",
             payload={
-                "schemaVersion": "1.1.1",
+                "schemaVersion": "1.1.2",
                 "eventType": "ANALYSIS_COMPLETED",
                 "fileId": "file-123",
                 "correlationId": "corr-123",
@@ -605,6 +605,7 @@ class TestOutboxPublisherRetryHandler:
             patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb),
             patch.object(outbox_publisher, "claim_event_for_publish", return_value=True),
             patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
+            patch.object(outbox_publisher, "mark_event_failed") as mark_event_failed,
         ):
             result = outbox_publisher.retry_handler({}, MagicMock())
 
@@ -613,6 +614,11 @@ class TestOutboxPublisherRetryHandler:
             "failure_count": 1,
             "total_processed": 1,
         }
+        mark_event_failed.assert_called_once_with(
+            outbox_event.event_id,
+            "SNS down",
+            aggregate_type=outbox_event.aggregate_type,
+        )
 
     def test_retry_handler_recovers_stale_publishing_events(self) -> None:
         outbox_event = OutboxEvent.for_file_processed(
