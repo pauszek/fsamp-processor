@@ -54,6 +54,8 @@ metrics = Metrics(namespace="FSAMP/OutboxPublisher")
 processor = BatchProcessor(event_type=EventType.DynamoDBStreams)
 MAX_RETRY_COUNT = int(os.environ.get("MAX_RETRY_COUNT", "3"))
 PUBLISH_CLAIM_TTL_SECONDS = int(os.environ.get("PUBLISH_CLAIM_TTL_SECONDS", "300"))
+DDB_STATUS_NAME = "#status"
+DDB_GSI1PK_VALUE = ":gsi1pk"
 _sns_client: SNSClient | None = None
 _dynamodb_client: DynamoDBClient | None = None
 _aws_factory: AWSClientFactory | None = None
@@ -272,16 +274,16 @@ def claim_event_for_publish(
                 "SK": {"S": f"EVENT#{outbox_event.event_id}"},
             },
             UpdateExpression=(
-                "SET #status = :publishing, publishingStartedAt = :started, "
-                "publisherClaimExpiresAt = :expires, GSI1PK = :gsi1pk"
+                f"SET {DDB_STATUS_NAME} = :publishing, publishingStartedAt = :started, "
+                f"publisherClaimExpiresAt = :expires, GSI1PK = {DDB_GSI1PK_VALUE}"
             ),
-            ConditionExpression="#status = :expected_status",
-            ExpressionAttributeNames={"#status": "status"},
+            ConditionExpression=f"{DDB_STATUS_NAME} = :expected_status",
+            ExpressionAttributeNames={DDB_STATUS_NAME: "status"},
             ExpressionAttributeValues={
                 ":publishing": {"S": OutboxStatus.PUBLISHING.value},
                 ":started": {"S": now.isoformat()},
                 ":expires": {"N": str(claim_expires_at)},
-                ":gsi1pk": {"S": f"STATUS#{OutboxStatus.PUBLISHING.value}"},
+                DDB_GSI1PK_VALUE: {"S": f"STATUS#{OutboxStatus.PUBLISHING.value}"},
                 ":expected_status": {"S": expected_status.value},
             },
         )
@@ -311,20 +313,20 @@ def mark_event_published(outbox_event: OutboxEvent) -> None:
                 "SK": {"S": f"EVENT#{outbox_event.event_id}"},
             },
             UpdateExpression=(
-                "SET #status = :status, publishedAt = :published, "
-                "GSI1PK = :gsi1pk, #ttl = :ttl "
+                f"SET {DDB_STATUS_NAME} = :status, publishedAt = :published, "
+                f"GSI1PK = {DDB_GSI1PK_VALUE}, #ttl = :ttl "
                 "REMOVE publishingStartedAt, publisherClaimExpiresAt"
             ),
-            ConditionExpression="#status = :publishing",
+            ConditionExpression=f"{DDB_STATUS_NAME} = :publishing",
             ExpressionAttributeNames={
-                "#status": "status",
+                DDB_STATUS_NAME: "status",
                 "#ttl": "ttl",
             },
             ExpressionAttributeValues={
                 ":status": {"S": OutboxStatus.PUBLISHED.value},
                 ":publishing": {"S": OutboxStatus.PUBLISHING.value},
                 ":published": {"S": now},
-                ":gsi1pk": {"S": f"STATUS#{OutboxStatus.PUBLISHED.value}"},
+                DDB_GSI1PK_VALUE: {"S": f"STATUS#{OutboxStatus.PUBLISHED.value}"},
                 ":ttl": {"N": str(ttl)},
             },
         )
@@ -348,20 +350,20 @@ def mark_event_failed(event_id: str, error: str, aggregate_type: str = "FileProc
             "SK": {"S": f"EVENT#{event_id}"},
         },
         UpdateExpression=(
-            "SET #status = :status, lastError = :error, "
+            f"SET {DDB_STATUS_NAME} = :status, lastError = :error, "
             "retryCount = if_not_exists(retryCount, :zero) + :inc, "
-            "GSI1PK = :gsi1pk "
+            f"GSI1PK = {DDB_GSI1PK_VALUE} "
             "REMOVE publishingStartedAt, publisherClaimExpiresAt"
         ),
         ExpressionAttributeNames={
-            "#status": "status",
+            DDB_STATUS_NAME: "status",
         },
         ExpressionAttributeValues={
             ":status": {"S": OutboxStatus.FAILED.value},
-            ":error": {"S": error[:1000]},  # Truncate long errors
+            ":error": {"S": error[:1000]},
             ":inc": {"N": "1"},
             ":zero": {"N": "0"},
-            ":gsi1pk": {"S": f"STATUS#{OutboxStatus.FAILED.value}"},
+            DDB_GSI1PK_VALUE: {"S": f"STATUS#{OutboxStatus.FAILED.value}"},
         },
     )
 
