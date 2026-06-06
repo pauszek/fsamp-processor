@@ -99,7 +99,7 @@ class TestRecordHandlerLogic:
     @pytest.fixture
     def sample_file_event_dict(self) -> dict:
         return {
-            "schema_version": "1.1.0",
+            "schema_version": "1.1.2",
             "file_id": str(uuid4()),
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),

@@ -276,7 +276,7 @@ class TestBackwardsCompatibility:
 class TestSchemaValidation:
     def test_invalid_event_type_rejected(self, event_schema: dict) -> None:
         invalid_json = {
-            "schemaVersion": "1.1.0",
+            "schemaVersion": "1.1.2",
             "fileId": str(uuid4()),
             "eventId": str(uuid4()),
             "correlationId": str(uuid4()),
@@ -304,7 +304,7 @@ class TestSchemaValidation:
 
     def test_missing_source_rejected(self, event_schema: dict) -> None:
         invalid_json = {
-            "schemaVersion": "1.1.0",
+            "schemaVersion": "1.1.2",
             "fileId": str(uuid4()),
             "eventId": str(uuid4()),
             "correlationId": str(uuid4()),

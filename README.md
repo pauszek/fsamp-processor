@@ -60,8 +60,12 @@ python -m processor.main
 
 ```bash
 docker build -f Dockerfile.lambda -t fsamp-processor-lambda:latest .
-docker build -t fsamp-processor:latest .
+docker build --build-arg REQUIRE_FIPS_PROVIDER=false -t fsamp-processor-dev:latest .
 ```
+
+`Dockerfile.lambda` is the production/FIPS-oriented runtime. The default
+`Dockerfile` is only for local development and CI e2e runs that do not require
+an AL2023 OpenSSL FIPS provider.
 
 Use the infra compose stack for LocalStack instead of service-local compose files.
 
@@ -79,6 +83,7 @@ Use the infra compose stack for LocalStack instead of service-local compose file
 | `S3_BUCKET_NAME` | File storage bucket | required |
 | `DYNAMODB_TABLE_NAME` | Metadata table | required |
 | `OUTBOX_TABLE_NAME` | Outbox table | optional |
+| `PUBLISH_CLAIM_TTL_SECONDS` | Outbox publish claim lease | `300` |
 | `KMS_KEY_ID` | Customer-managed KMS key | required |
 
 ## Tests

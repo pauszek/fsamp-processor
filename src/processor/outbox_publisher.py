@@ -53,6 +53,7 @@ tracer = Tracer(service="outbox-publisher")
 metrics = Metrics(namespace="FSAMP/OutboxPublisher")
 processor = BatchProcessor(event_type=EventType.DynamoDBStreams)
 MAX_RETRY_COUNT = int(os.environ.get("MAX_RETRY_COUNT", "3"))
+PUBLISH_CLAIM_TTL_SECONDS = int(os.environ.get("PUBLISH_CLAIM_TTL_SECONDS", "300"))
 _sns_client: SNSClient | None = None
 _dynamodb_client: DynamoDBClient | None = None
 _aws_factory: AWSClientFactory | None = None
@@ -142,13 +143,21 @@ def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
         outbox_event = OutboxEvent.from_dynamodb_item(new_image)
 
         logger.info(
-            "Publishing outbox event to SNS",
+            "Claiming outbox event for SNS publish",
             outbox_event_id=outbox_event.event_id,
             event_type=outbox_event.event_type.value,
             aggregate_id=outbox_event.aggregate_id,
             event_name=event_name,
             event_id=event_id,
         )
+
+        if not claim_event_for_publish(outbox_event):
+            logger.info("Outbox event already claimed", event_id=outbox_event.event_id)
+            return {
+                "status": "skipped",
+                "reason": "already_claimed",
+                "event_id": outbox_event.event_id,
+            }
 
         publish_to_sns(outbox_event)
 
@@ -226,6 +235,11 @@ def publish_to_sns(outbox_event: OutboxEvent) -> str:
             "DataType": "String",
             "StringValue": str(outbox_event.payload["correlationId"]),
         }
+    # Stable dedupe key for consumers of SNS standard topics.
+    attributes["idempotencyKey"] = {
+        "DataType": "String",
+        "StringValue": outbox_event.event_id,
+    }
 
     topic_arn = get_sns_topic_arn()
     response = sns.publish(
@@ -241,34 +255,85 @@ def publish_to_sns(outbox_event: OutboxEvent) -> str:
 
 
 @tracer.capture_method
+def claim_event_for_publish(
+    outbox_event: OutboxEvent,
+    expected_status: OutboxStatus = OutboxStatus.PENDING,
+) -> bool:
+    """Claim an outbox event before publishing it to SNS."""
+    dynamodb = get_dynamodb_client()
+    now = datetime.now(UTC)
+    claim_expires_at = int((now + timedelta(seconds=PUBLISH_CLAIM_TTL_SECONDS)).timestamp())
+
+    try:
+        dynamodb.update_item(
+            TableName=get_outbox_table_name(),
+            Key={
+                "PK": {"S": f"OUTBOX#{outbox_event.aggregate_type}"},
+                "SK": {"S": f"EVENT#{outbox_event.event_id}"},
+            },
+            UpdateExpression=(
+                "SET #status = :publishing, publishingStartedAt = :started, "
+                "publisherClaimExpiresAt = :expires, GSI1PK = :gsi1pk"
+            ),
+            ConditionExpression="#status = :expected_status",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":publishing": {"S": OutboxStatus.PUBLISHING.value},
+                ":started": {"S": now.isoformat()},
+                ":expires": {"N": str(claim_expires_at)},
+                ":gsi1pk": {"S": f"STATUS#{OutboxStatus.PUBLISHING.value}"},
+                ":expected_status": {"S": expected_status.value},
+            },
+        )
+        logger.debug("Claimed outbox event", event_id=outbox_event.event_id)
+        return True
+    except dynamodb.exceptions.ConditionalCheckFailedException:
+        logger.info(
+            "Skipping outbox event because it is no longer claimable",
+            event_id=outbox_event.event_id,
+            expected_status=expected_status.value,
+        )
+        return False
+
+
+@tracer.capture_method
 def mark_event_published(outbox_event: OutboxEvent) -> None:
-    """Mark outbox event as published in DynamoDB."""
+    """Mark a claimed outbox event as published in DynamoDB."""
     dynamodb = get_dynamodb_client()
     now = datetime.now(UTC).isoformat()
     ttl = int((datetime.now(UTC) + timedelta(hours=24)).timestamp())
 
-    dynamodb.update_item(
-        TableName=get_outbox_table_name(),
-        Key={
-            "PK": {"S": f"OUTBOX#{outbox_event.aggregate_type}"},
-            "SK": {"S": f"EVENT#{outbox_event.event_id}"},
-        },
-        UpdateExpression=(
-            "SET #status = :status, publishedAt = :published, GSI1PK = :gsi1pk, #ttl = :ttl"
-        ),
-        ExpressionAttributeNames={
-            "#status": "status",
-            "#ttl": "ttl",
-        },
-        ExpressionAttributeValues={
-            ":status": {"S": OutboxStatus.PUBLISHED.value},
-            ":published": {"S": now},
-            ":gsi1pk": {"S": f"STATUS#{OutboxStatus.PUBLISHED.value}"},
-            ":ttl": {"N": str(ttl)},
-        },
-    )
-
-    logger.debug("Marked event as published", event_id=outbox_event.event_id)
+    try:
+        dynamodb.update_item(
+            TableName=get_outbox_table_name(),
+            Key={
+                "PK": {"S": f"OUTBOX#{outbox_event.aggregate_type}"},
+                "SK": {"S": f"EVENT#{outbox_event.event_id}"},
+            },
+            UpdateExpression=(
+                "SET #status = :status, publishedAt = :published, "
+                "GSI1PK = :gsi1pk, #ttl = :ttl "
+                "REMOVE publishingStartedAt, publisherClaimExpiresAt"
+            ),
+            ConditionExpression="#status = :publishing",
+            ExpressionAttributeNames={
+                "#status": "status",
+                "#ttl": "ttl",
+            },
+            ExpressionAttributeValues={
+                ":status": {"S": OutboxStatus.PUBLISHED.value},
+                ":publishing": {"S": OutboxStatus.PUBLISHING.value},
+                ":published": {"S": now},
+                ":gsi1pk": {"S": f"STATUS#{OutboxStatus.PUBLISHED.value}"},
+                ":ttl": {"N": str(ttl)},
+            },
+        )
+        logger.debug("Marked event as published", event_id=outbox_event.event_id)
+    except dynamodb.exceptions.ConditionalCheckFailedException:
+        logger.info(
+            "Outbox event already marked as published; skipping idempotent update",
+            event_id=outbox_event.event_id,
+        )
 
 
 @tracer.capture_method
@@ -285,7 +350,8 @@ def mark_event_failed(event_id: str, error: str, aggregate_type: str = "FileProc
         UpdateExpression=(
             "SET #status = :status, lastError = :error, "
             "retryCount = if_not_exists(retryCount, :zero) + :inc, "
-            "GSI1PK = :gsi1pk"
+            "GSI1PK = :gsi1pk "
+            "REMOVE publishingStartedAt, publisherClaimExpiresAt"
         ),
         ExpressionAttributeNames={
             "#status": "status",
@@ -361,7 +427,7 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
 
     dynamodb = get_dynamodb_client()
 
-    response = dynamodb.query(
+    failed_response = dynamodb.query(
         TableName=get_outbox_table_name(),
         IndexName="GSI1",
         KeyConditionExpression="GSI1PK = :status",
@@ -373,29 +439,31 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
         Limit=100,
     )
 
-    items = response.get("Items", [])
-    logger.info(f"Found {len(items)} failed events to retry")
+    publishing_response = dynamodb.query(
+        TableName=get_outbox_table_name(),
+        IndexName="GSI1",
+        KeyConditionExpression="GSI1PK = :status",
+        FilterExpression="publisherClaimExpiresAt < :now",
+        ExpressionAttributeValues={
+            ":status": {"S": f"STATUS#{OutboxStatus.PUBLISHING.value}"},
+            ":now": {"N": str(int(datetime.now(UTC).timestamp()))},
+        },
+        Limit=100,
+    )
+
+    items = failed_response.get("Items", []) + publishing_response.get("Items", [])
+    logger.info(f"Found {len(items)} outbox events to retry")
 
     success_count = 0
     failure_count = 0
 
     for item in items:
+        outbox_event: OutboxEvent | None = None
         try:
             outbox_event = OutboxEvent.from_dynamodb_item(item)
 
-            dynamodb.update_item(
-                TableName=get_outbox_table_name(),
-                Key={
-                    "PK": {"S": f"OUTBOX#{outbox_event.aggregate_type}"},
-                    "SK": {"S": f"EVENT#{outbox_event.event_id}"},
-                },
-                UpdateExpression="SET #status = :pending, GSI1PK = :gsi1pk",
-                ExpressionAttributeNames={"#status": "status"},
-                ExpressionAttributeValues={
-                    ":pending": {"S": OutboxStatus.PENDING.value},
-                    ":gsi1pk": {"S": f"STATUS#{OutboxStatus.PENDING.value}"},
-                },
-            )
+            if not claim_event_for_publish(outbox_event, expected_status=outbox_event.status):
+                continue
 
             publish_to_sns(outbox_event)
             mark_event_published(outbox_event)
@@ -403,9 +471,15 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
             success_count += 1
             logger.info(f"Successfully retried event {outbox_event.event_id}")
 
-        except Exception:
+        except Exception as exc:
             failure_count += 1
             logger.exception("Failed to retry event", item_pk=item.get("PK", {}).get("S"))
+            if outbox_event is not None:
+                mark_event_failed(
+                    outbox_event.event_id,
+                    str(exc),
+                    aggregate_type=outbox_event.aggregate_type,
+                )
 
     metrics.add_metric(name="EventsRetried", unit=MetricUnit.Count, value=success_count)
     metrics.add_metric(name="EventsRetryFailed", unit=MetricUnit.Count, value=failure_count)

@@ -256,7 +256,7 @@ class TestAnalysisResult:
 class TestOutboxEvent:
     def test_create_defaults_message_group_to_aggregate_id(self) -> None:
         event = OutboxEvent.create(
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id="file-123",
             payload={"fileId": "file-123"},
         )
@@ -272,7 +272,7 @@ class TestOutboxEvent:
             error_message="scanner unavailable",
         )
 
-        assert event.event_type == OutboxEventType.FILE_FAILED
+        assert event.event_type == OutboxEventType.PROCESSING_FAILED
         assert event.payload["errorCode"] == "SCAN_FAILED"
         assert event.payload["errorMessage"] == "scanner unavailable"
         assert "failedAt" in event.payload
@@ -285,7 +285,8 @@ class TestOutboxEvent:
             findings=["signature-match"],
         )
 
-        assert event.event_type == OutboxEventType.FILE_QUARANTINED
+        assert event.event_type == OutboxEventType.ANALYSIS_COMPLETED
+        assert event.payload["isSafe"] is False
         assert event.payload["reason"] == "malware"
         assert event.payload["findings"] == ["signature-match"]
         assert "quarantinedAt" in event.payload
@@ -293,7 +294,7 @@ class TestOutboxEvent:
     def test_to_dynamodb_item_includes_optional_fields(self) -> None:
         event = OutboxEvent(
             event_id="event-123",
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id="file-123",
             published_at="2026-05-12T00:00:00+00:00",
             retry_count=2,
@@ -320,7 +321,7 @@ class TestOutboxEvent:
     def test_from_dynamodb_item_supports_deserialized_stream_image(self) -> None:
         item = {
             "eventId": "event-123",
-            "eventType": "FILE_PROCESSED",
+            "eventType": "ANALYSIS_COMPLETED",
             "aggregateId": "file-123",
             "payload": {"fileId": "file-123"},
             "status": "PENDING",
@@ -347,7 +348,7 @@ class TestOutboxEvent:
 
     def test_from_dynamodb_stream_record_reads_new_image(self) -> None:
         item = OutboxEvent.create(
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id="file-123",
             payload={"fileId": "file-123"},
         ).to_dynamodb_item()
@@ -358,7 +359,7 @@ class TestOutboxEvent:
 
     def test_mark_published_and_failed_update_status_fields(self) -> None:
         event = OutboxEvent.create(
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id="file-123",
             payload={},
         )
@@ -376,7 +377,7 @@ class TestOutboxEvent:
     def test_sns_message_and_attributes(self) -> None:
         event = OutboxEvent(
             event_id="event-123",
-            event_type=OutboxEventType.FILE_PROCESSED,
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
             aggregate_id="file-123",
             aggregate_type="FileProcessing",
             payload={"fileId": "file-123"},
@@ -385,7 +386,7 @@ class TestOutboxEvent:
 
         assert event.to_sns_message() == {
             "eventId": "event-123",
-            "eventType": "FILE_PROCESSED",
+            "eventType": "ANALYSIS_COMPLETED",
             "aggregateId": "file-123",
             "aggregateType": "FileProcessing",
             "payload": {"fileId": "file-123"},
