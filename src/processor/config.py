@@ -9,6 +9,13 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+SUPPORTED_FIPS_ENDPOINT_REGION = "us-west-2"
+
+
+def is_fips_endpoint_region(region: str) -> bool:
+    """Return True when the project permits AWS FIPS endpoint usage in region."""
+    return region == SUPPORTED_FIPS_ENDPOINT_REGION
+
 
 class Settings(BaseSettings):
     """
@@ -52,7 +59,7 @@ class Settings(BaseSettings):
     )
     use_fips_endpoint: bool = Field(
         default=True,
-        description="Use AWS FIPS endpoints where supported (requires us-* region)",
+        description="Use AWS FIPS endpoints in the supported us-west-2 deployment region",
     )
 
     fips_required: bool | None = Field(
@@ -152,11 +159,19 @@ class Settings(BaseSettings):
         """
         Check if FIPS endpoints should be used.
 
-        FIPS endpoints are only available in us-* regions and not for LocalStack.
+        FIPS endpoints are only enabled in the supported project baseline
+        regions and never for LocalStack/custom endpoints.
         """
         if self.is_local or self.aws_endpoint_url:
             return False
-        return self.use_fips_endpoint and self.aws_region.startswith("us-")
+        if not self.use_fips_endpoint:
+            return False
+        if not is_fips_endpoint_region(self.aws_region):
+            raise ValueError(
+                "AWS FIPS endpoints requested but region does not support "
+                f"the FSAMP FIPS endpoint baseline: {self.aws_region}"
+            )
+        return True
 
     @property
     def should_require_fips(self) -> bool:

@@ -30,7 +30,7 @@ class TestAWSClientFactoryInit:
         assert factory._is_local is True
         assert factory._use_fips is False  # FIPS disabled for local
 
-    def test_init_with_fips_us_region(self) -> None:
+    def test_init_with_fips_us_west_2_region(self) -> None:
         factory = AWSClientFactory(
             region="us-west-2",
             use_fips=True,
@@ -39,13 +39,21 @@ class TestAWSClientFactoryInit:
         assert factory._use_fips is True
         assert factory._config is FIPS_CONFIG
 
-    def test_init_with_fips_non_us_region(self) -> None:
+    @pytest.mark.parametrize("region", ["us-east-1", "eu-west-1"])
+    def test_init_with_fips_unsupported_region_fails_closed(self, region: str) -> None:
+        with pytest.raises(ValueError, match="FIPS endpoints requested"):
+            AWSClientFactory(
+                region=region,
+                use_fips=True,
+            )
+
+    def test_init_with_fips_disabled_allows_unsupported_region(self) -> None:
         factory = AWSClientFactory(
             region="eu-west-1",
-            use_fips=True,
+            use_fips=False,
         )
 
-        assert factory._use_fips is False  # FIPS only for us-* regions
+        assert factory._use_fips is False
 
     def test_init_with_fips_local_disabled(self) -> None:
         factory = AWSClientFactory(

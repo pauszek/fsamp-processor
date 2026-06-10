@@ -42,7 +42,7 @@ class KMSCryptoProvider(CryptoProvider):
     3. Encrypted DEK is stored alongside ciphertext
 
     FIPS 140-3-oriented posture:
-    - Uses AWS KMS (FIPS 140-3 Level 3 validated or in validation)
+    - Delegates key operations to AWS KMS instead of custom key handling
     - AES-256-GCM for symmetric encryption
     - SHA-256/384/512 for hashing
     - No disallowed legacy algorithms (MD5, SHA-1, DES, etc.)

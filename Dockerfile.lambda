@@ -27,7 +27,7 @@ COPY src/ src/
 RUN pip install --no-cache-dir .
 FROM public.ecr.aws/lambda/python:3.14
 
-ARG OPENSSL_FIPS_PROVIDER=latest
+ARG OPENSSL_FIPS_PROVIDER=certified
 ARG AL2023_SECURITY_RELEASEVER=latest
 ARG INCLUDE_LAMBDA_RIE=false
 
