@@ -48,7 +48,8 @@ RUN dnf install -y \
         glibc \
         glibc-common \
         glibc-langpack-en \
-        glibc-minimal-langpack && \
+        glibc-minimal-langpack \
+        libsolv && \
     if [ "${OPENSSL_FIPS_PROVIDER}" = "certified" ]; then \
         dnf swap -y openssl-fips-provider-latest openssl-fips-provider-certified; \
     elif [ "${OPENSSL_FIPS_PROVIDER}" != "latest" ]; then \
