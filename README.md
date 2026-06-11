@@ -43,12 +43,14 @@ pip install -e ".[dev,test]"
 
 ### Dependency lockfile
 
-Runtime dependencies are hash-pinned in `requirements.lock`
-(`pip-compile --generate-hashes`). Container images and CI install with
-`pip install --require-hashes -r requirements.lock` so every dependency is
-verified against its recorded SHA-256 before installation (NIST SR-3/SR-4).
-`requirements.txt` stays the human-edited specification — after changing it,
-regenerate the lockfile:
+Runtime dependencies are hash-pinned in `requirements.lock` and development
+dependencies in `requirements-dev.lock` (`pip-compile --generate-hashes`;
+the dev lock is constrained to the runtime lock so both resolve the same
+runtime versions). Container images and CI install with
+`pip install --require-hashes` so every dependency is verified against its
+recorded SHA-256 before installation (NIST SR-3/SR-4). `requirements.txt`
+and `requirements-dev.txt` stay the human-edited specification — after
+changing them, regenerate the lockfiles:
 
 ```bash
 make lock
