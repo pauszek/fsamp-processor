@@ -1,4 +1,4 @@
-.PHONY: help install dev test lint format type-check clean build run docker-build
+.PHONY: help install dev lock test lint format type-check clean build run docker-build
 
 PYTHON := python3
 VENV := .venv
@@ -46,8 +46,15 @@ $(VENV):
 
 install: $(VENV)
 	$(PIP) install --upgrade pip
-	$(PIP) install -r requirements.txt
-	$(PIP) install -e .
+	$(PIP) install --require-hashes -r requirements.lock
+	$(PIP) install --no-deps -e .
+
+# Regenerate the hash-pinned lockfile after editing requirements.txt.
+# Containers and CI install with --require-hashes from requirements.lock.
+lock: $(VENV)
+	$(PIP) install pip-tools
+	$(VENV)/bin/pip-compile --generate-hashes --strip-extras \
+		--output-file requirements.lock requirements.txt
 
 dev: $(VENV)
 	$(PIP) install --upgrade pip

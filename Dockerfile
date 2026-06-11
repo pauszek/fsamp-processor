@@ -11,14 +11,16 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Hash-pinned lockfile (pip-compile --generate-hashes): reproducible,
+# tamper-evident dependency install (SR-3/SR-4). Regenerate via `make lock`.
+COPY requirements.lock .
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --require-hashes -r requirements.lock
 
 COPY src/ src/
 COPY pyproject.toml .
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps --no-build-isolation .
 FROM python:3.14-slim-bookworm AS production
 
 ARG REQUIRE_FIPS_PROVIDER=true
