@@ -56,12 +56,12 @@ changing them, regenerate the lockfiles:
 make lock
 ```
 
-Start LocalStack from the infra repository, then apply local Terraform:
+Provision the local environment from the infra repository (LocalStack Pro,
+Terraform-managed, seeds test users):
 
 ```bash
 cd ../fsamp-infra
-make up
-make apply-local
+make local-all
 ```
 
 Run the processor locally:
