@@ -4,9 +4,9 @@ Supports both AWS Lambda and LocalStack/ECS environments.
 """
 
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SUPPORTED_FIPS_ENDPOINT_REGION = "us-west-2"
@@ -36,10 +36,15 @@ class Settings(BaseSettings):
         default="local",
         description="Deployment environment",
     )
+    aws_lambda_function_name: str = Field(
+        default="",
+        alias="AWS_LAMBDA_FUNCTION_NAME",
+        description="AWS Lambda runtime function name, when present",
+        exclude=True,
+    )
     is_lambda: bool = Field(
         default=False,
         description="Whether running as AWS Lambda (auto-detected)",
-        alias="AWS_LAMBDA_FUNCTION_NAME",
     )
     aws_region: str = Field(
         default="us-west-2",
@@ -73,7 +78,15 @@ class Settings(BaseSettings):
     )
     sns_topic_arn: str = Field(
         default="",
-        description="ARN of the SNS file events topic",
+        description="Fallback ARN of the SNS topic used for published outbox events",
+    )
+    file_events_topic_arn: str = Field(
+        default="",
+        description="ARN of the SNS file-events topic that feeds the processing queue",
+    )
+    processing_events_topic_arn: str = Field(
+        default="",
+        description="ARN of the SNS processing-events topic for processor result events",
     )
     s3_bucket_name: str = Field(
         default="",
@@ -144,6 +157,12 @@ class Settings(BaseSettings):
     def uppercase_log_level(cls, v: str) -> str:
         return v.upper() if isinstance(v, str) else v
 
+    @model_validator(mode="after")
+    def detect_lambda_runtime(self) -> Self:
+        if self.aws_lambda_function_name:
+            self.is_lambda = True
+        return self
+
     @property
     def is_local(self) -> bool:
         """Check if running in local environment."""
@@ -159,19 +178,17 @@ class Settings(BaseSettings):
         """
         Check if FIPS endpoints should be used.
 
-        FIPS endpoints are only enabled in the supported project baseline
-        regions and never for LocalStack/custom endpoints.
+        Real AWS deployments are pinned to the supported project baseline
+        region and FIPS endpoints are never used for LocalStack/custom endpoints.
         """
         if self.is_local or self.aws_endpoint_url:
             return False
-        if not self.use_fips_endpoint:
-            return False
         if not is_fips_endpoint_region(self.aws_region):
             raise ValueError(
-                "AWS FIPS endpoints requested but region does not support "
-                f"the FSAMP FIPS endpoint baseline: {self.aws_region}"
+                "FSAMP active AWS deployments are pinned to the "
+                f"{SUPPORTED_FIPS_ENDPOINT_REGION} FIPS endpoint baseline: {self.aws_region}"
             )
-        return True
+        return self.use_fips_endpoint
 
     @property
     def should_require_fips(self) -> bool:

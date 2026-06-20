@@ -14,7 +14,7 @@ Event-driven file processor for the FSAMP platform. The primary runtime is AWS L
 | Processing | Metadata persistence, checksum validation, safe/unsafe classification |
 | Storage | S3 read/write through outbound ports |
 | Messaging | SNS publishing through direct or transactional outbox mode |
-| Crypto posture | AWS KMS and OpenSSL FIPS provider where supported |
+| Crypto posture | AWS KMS and OpenSSL FIPS provider in the us-west-2 deployment baseline |
 | Observability | Structured logs, Powertools metrics/tracing in Lambda |
 
 ## Structure
@@ -91,7 +91,7 @@ Use the infra compose stack for LocalStack instead of service-local compose file
 | `ENVIRONMENT` | `local`, `dev`, `staging`, `prod` | `local` |
 | `AWS_REGION` | AWS region | `us-west-2` |
 | `AWS_ENDPOINT_URL` | LocalStack endpoint | unset |
-| `USE_FIPS_ENDPOINT` | Use AWS FIPS endpoints where supported | `true` |
+| `USE_FIPS_ENDPOINT` | Use AWS FIPS endpoints in the us-west-2 deployment baseline | `true` |
 | `FIPS_REQUIRED` | Fail closed when FIPS runtime is unavailable | non-local only |
 | `SQS_QUEUE_URL` | Input queue URL for ECS mode | required |
 | `SNS_TOPIC_ARN` | File event topic ARN | required |

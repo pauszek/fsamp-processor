@@ -173,7 +173,7 @@ class TestMetadataRecord:
             object_key="object",
             status=ProcessingStatus.COMPLETED,
             file_hash="a" * 64,
-            kms_key_id="arn:aws:kms:us-east-1:123456789012:key/abc",
+            kms_key_id="arn:aws:kms:us-west-2:123456789012:key/abc",
             is_safe=True,
             scan_findings=["clean"],
             created_at="2026-05-12T00:00:00+00:00",

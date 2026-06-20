@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError
 from processor.adapters.inbound.sqs_consumer import SQSConsumer
 from processor.domain.exceptions import MessageError, NonRetryableError
 
-VALID_KMS_KEY_ID = "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+VALID_KMS_KEY_ID = "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012"
 
 
 class TestSQSConsumerInit:
@@ -322,7 +322,7 @@ class TestSQSConsumerProcessMessage:
             "security_context": {
                 "is_encrypted": True,
                 "encryption_algorithm": "AES/GCM/NoPadding",
-                "kms_key_id": "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+                "kms_key_id": "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
             },
         }
 
@@ -396,7 +396,7 @@ class TestSQSConsumerProcessMessage:
             "security_context": {
                 "is_encrypted": True,
                 "encryption_algorithm": "AES/GCM/NoPadding",
-                "kms_key_id": "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+                "kms_key_id": "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
             },
         }
 
@@ -445,7 +445,7 @@ class TestSQSConsumerProcessMessage:
             "security_context": {
                 "is_encrypted": True,
                 "encryption_algorithm": "AES/GCM/NoPadding",
-                "kms_key_id": "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+                "kms_key_id": "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
             },
         }
 

@@ -45,7 +45,7 @@ from aws_lambda_powertools.utilities.data_classes.dynamo_db_stream_event import 
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
 from processor.config import Settings, get_settings
-from processor.domain.models import OutboxEvent, OutboxStatus
+from processor.domain.models import OutboxEvent, OutboxEventType, OutboxStatus
 from processor.infrastructure import AWSClientFactory, enforce_fips
 
 logger = Logger(service="outbox-publisher")
@@ -80,15 +80,66 @@ def get_aws_factory() -> AWSClientFactory:
 
 def get_sns_topic_arn() -> str:
     """Resolve SNS topic ARN from settings or environment."""
-    if _settings and _settings.sns_topic_arn:
-        return _settings.sns_topic_arn
+    if _settings:
+        value = getattr(_settings, "sns_topic_arn", "")
+        if isinstance(value, str) and value:
+            return value
     return os.environ.get("SNS_TOPIC_ARN", "")
+
+
+def get_file_events_topic_arn() -> str:
+    """Resolve the FILE_UPLOADED SNS topic ARN."""
+    if _settings:
+        value = getattr(_settings, "file_events_topic_arn", "")
+        if isinstance(value, str) and value:
+            return value
+    return os.environ.get("FILE_EVENTS_TOPIC_ARN", "")
+
+
+def get_processing_events_topic_arn() -> str:
+    """Resolve the processing result SNS topic ARN."""
+    if _settings:
+        value = getattr(_settings, "processing_events_topic_arn", "")
+        if isinstance(value, str) and value:
+            return value
+    return os.environ.get("PROCESSING_EVENTS_TOPIC_ARN", "")
+
+
+def get_topic_arn_for_event(outbox_event: OutboxEvent) -> str:
+    """Route outbox events to the topic matching their bounded context."""
+    if (
+        outbox_event.event_type == OutboxEventType.FILE_UPLOADED
+        or outbox_event.aggregate_type == "FileUpload"
+    ):
+        topic_arn = get_file_events_topic_arn() or get_sns_topic_arn()
+        if topic_arn:
+            return topic_arn
+        raise ValueError("FILE_EVENTS_TOPIC_ARN environment variable not set")
+
+    if outbox_event.event_type in {
+        OutboxEventType.FILE_SCANNED,
+        OutboxEventType.ANALYSIS_COMPLETED,
+        OutboxEventType.PROCESSING_FAILED,
+    }:
+        topic_arn = get_processing_events_topic_arn() or get_sns_topic_arn()
+        if topic_arn:
+            return topic_arn
+        raise ValueError("PROCESSING_EVENTS_TOPIC_ARN environment variable not set")
+
+    topic_arn = (
+        get_sns_topic_arn() or get_processing_events_topic_arn() or get_file_events_topic_arn()
+    )
+    if topic_arn:
+        return topic_arn
+    raise ValueError("SNS topic ARN environment variable not set")
 
 
 def get_outbox_table_name() -> str:
     """Resolve outbox table name from settings or environment."""
-    if _settings and _settings.outbox_table_name:
-        return _settings.outbox_table_name
+    if _settings:
+        value = getattr(_settings, "outbox_table_name", "")
+        if isinstance(value, str) and value:
+            return value
     return os.environ.get("OUTBOX_TABLE_NAME", "")
 
 
@@ -108,6 +159,20 @@ def get_dynamodb_client() -> DynamoDBClient:
     return _dynamodb_client
 
 
+def dynamodb_event_name(record: DynamoDBRecord) -> str:
+    """Normalize Powertools/raw DynamoDB Streams event names."""
+    value = record.event_name
+    name = getattr(value, "name", None)
+    if isinstance(name, str) and name in {"INSERT", "MODIFY", "REMOVE"}:
+        return name
+
+    wire_value = getattr(value, "value", None)
+    if isinstance(wire_value, str):
+        return wire_value
+
+    return str(value).split(".")[-1]
+
+
 @tracer.capture_method
 def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
     """
@@ -122,10 +187,10 @@ def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
     Returns:
         Result dictionary with event details.
     """
-    event_name = record.event_name
+    event_name = dynamodb_event_name(record)
     event_id = record.event_id
 
-    if str(record.event_name) != "INSERT":
+    if event_name != "INSERT":
         logger.debug("Skipping non-INSERT event", event_name=event_name, event_id=event_id)
         return {"status": "skipped", "reason": "not_insert"}
 
@@ -243,7 +308,7 @@ def publish_to_sns(outbox_event: OutboxEvent) -> str:
         "StringValue": outbox_event.event_id,
     }
 
-    topic_arn = get_sns_topic_arn()
+    topic_arn = get_topic_arn_for_event(outbox_event)
     response = sns.publish(
         TopicArn=topic_arn,
         Message=message,
@@ -251,7 +316,7 @@ def publish_to_sns(outbox_event: OutboxEvent) -> str:
     )
 
     message_id = str(response["MessageId"])
-    logger.debug("Published to SNS", message_id=message_id)
+    logger.debug("Published to SNS", message_id=message_id, topic_arn=topic_arn)
 
     return message_id
 
@@ -392,8 +457,10 @@ def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, A
         record_count=len(event.get("Records", [])),
     )
 
-    if not get_sns_topic_arn():
-        raise ValueError("SNS_TOPIC_ARN environment variable not set")
+    if not (
+        get_sns_topic_arn() or get_file_events_topic_arn() or get_processing_events_topic_arn()
+    ):
+        raise ValueError("SNS topic ARN environment variable not set")
     if not get_outbox_table_name():
         raise ValueError("OUTBOX_TABLE_NAME environment variable not set")
 
