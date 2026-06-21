@@ -9,7 +9,7 @@ from aws_lambda_powertools.utilities.batch import EventType as BatchEventType
 import processor.lambda_handler as handler_module
 from processor.domain.events import FileEvent
 
-VALID_KMS_KEY_ID = "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+VALID_KMS_KEY_ID = "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012"
 
 
 class TestGetFileProcessor:
@@ -18,13 +18,13 @@ class TestGetFileProcessor:
         handler_module._settings = None
 
         mock_settings = MagicMock()
-        mock_settings.aws_region = "us-east-1"
+        mock_settings.aws_region = "us-west-2"
         mock_settings.aws_endpoint_url = None
         mock_settings.should_use_fips = False
         mock_settings.should_require_fips = False
         mock_settings.kms_key_id = VALID_KMS_KEY_ID
         mock_settings.dynamodb_table_name = "test-table"
-        mock_settings.sns_topic_arn = "arn:aws:sns:us-east-1:123456789012:test"
+        mock_settings.sns_topic_arn = "arn:aws:sns:us-west-2:123456789012:test"
         mock_settings.outbox_table_name = None
         mock_settings.max_file_size_bytes = 100 * 1024 * 1024
 
@@ -62,13 +62,13 @@ class TestGetFileProcessor:
         handler_module._settings = None
 
         mock_settings = MagicMock()
-        mock_settings.aws_region = "us-east-1"
+        mock_settings.aws_region = "us-west-2"
         mock_settings.aws_endpoint_url = None
         mock_settings.should_use_fips = False
         mock_settings.should_require_fips = False
         mock_settings.kms_key_id = VALID_KMS_KEY_ID
         mock_settings.dynamodb_table_name = "test-table"
-        mock_settings.sns_topic_arn = "arn:aws:sns:us-east-1:123456789012:test"
+        mock_settings.sns_topic_arn = "arn:aws:sns:us-west-2:123456789012:test"
         mock_settings.outbox_table_name = "outbox-table"
         mock_settings.max_file_size_bytes = 100 * 1024 * 1024
 
@@ -133,7 +133,7 @@ class TestRecordHandlerLogic:
     def test_json_parsing_sns_wrapped(self, sample_file_event_dict: dict) -> None:
         sns_message = {
             "Type": "Notification",
-            "TopicArn": "arn:aws:sns:us-east-1:123456789012:test",
+            "TopicArn": "arn:aws:sns:us-west-2:123456789012:test",
             "Message": json.dumps(sample_file_event_dict),
         }
         body = json.dumps(sns_message)

@@ -35,7 +35,7 @@ Deployment is owned by `fsamp-infra`. This repo no longer carries SAM or manual 
 
 - Customer-managed AWS KMS keys are required for production encryption paths.
 - AES-GCM and SHA-256/384/512 are the accepted application-level algorithms.
-- `USE_FIPS_ENDPOINT=true` enables AWS FIPS endpoints where the selected region supports them.
+- `USE_FIPS_ENDPOINT=true` enables AWS FIPS endpoints in the pinned `us-west-2` deployment baseline.
 - `FIPS_REQUIRED=true` fails startup when the expected FIPS runtime checks cannot pass.
 - LocalStack runs with FIPS checks relaxed because it does not expose equivalent endpoints.
 

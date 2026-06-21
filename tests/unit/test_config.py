@@ -26,18 +26,44 @@ def test_should_use_fips_requires_supported_region_and_no_custom_endpoint() -> N
         ).should_use_fips
         is False
     )
-    assert Settings(environment="prod", use_fips_endpoint=False).should_use_fips is False
+    assert (
+        Settings(
+            environment="prod",
+            aws_region="us-west-2",
+            use_fips_endpoint=False,
+        ).should_use_fips
+        is False
+    )
 
 
 @pytest.mark.parametrize("region", ["us-east-1", "eu-west-1"])
-def test_should_use_fips_fails_closed_for_unsupported_region(region: str) -> None:
-    with pytest.raises(ValueError, match="FIPS endpoints requested"):
+def test_should_use_fips_fails_closed_for_unsupported_deployment_region(region: str) -> None:
+    with pytest.raises(ValueError, match="us-west-2 FIPS endpoint baseline"):
         _ = Settings(environment="prod", aws_region=region).should_use_fips
+
+
+@pytest.mark.parametrize("region", ["us-east-1", "eu-west-1"])
+def test_should_use_fips_fails_closed_for_unsupported_region_when_fips_disabled(
+    region: str,
+) -> None:
+    with pytest.raises(ValueError, match="us-west-2 FIPS endpoint baseline"):
+        _ = Settings(
+            environment="prod",
+            aws_region=region,
+            use_fips_endpoint=False,
+        ).should_use_fips
 
 
 def test_fips_required_override_takes_precedence() -> None:
     assert Settings(environment="prod", fips_required=False).should_require_fips is False
     assert Settings(environment="local", fips_required=True).should_require_fips is True
+
+
+def test_lambda_runtime_name_auto_detects_lambda() -> None:
+    settings = Settings(AWS_LAMBDA_FUNCTION_NAME="fsamp-local-processor")
+
+    assert settings.aws_lambda_function_name == "fsamp-local-processor"
+    assert settings.is_lambda is True
 
 
 def test_json_logging_flag() -> None:

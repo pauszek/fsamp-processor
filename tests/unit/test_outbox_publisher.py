@@ -19,6 +19,8 @@ class TestOutboxPublisherHelpers:
         outbox_publisher._settings = None
         yield
         os.environ.pop("SNS_TOPIC_ARN", None)
+        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
+        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_get_sns_client_singleton(self) -> None:
@@ -48,7 +50,7 @@ class TestOutboxPublisherHelpers:
     def test_get_aws_factory_initializes_with_settings_and_enforces_fips(self) -> None:
         settings = MagicMock(
             should_require_fips=True,
-            aws_region="us-east-1",
+            aws_region="us-west-2",
             aws_endpoint_url=None,
             should_use_fips=True,
         )
@@ -63,13 +65,26 @@ class TestOutboxPublisherHelpers:
         assert factory is aws_client_factory.return_value
         enforce_fips.assert_called_once_with(True)
         aws_client_factory.assert_called_once_with(
-            region="us-east-1",
+            region="us-west-2",
             endpoint_url=None,
             use_fips=True,
         )
 
 
 class TestOutboxPublisherRecordHandlerLogic:
+    def test_dynamodb_event_name_normalizes_powertools_enum(self) -> None:
+        class EventName:
+            name = "INSERT"
+            value = 0
+
+            def __str__(self) -> str:
+                return "DynamoDBRecordEventName.INSERT"
+
+        record = MagicMock()
+        record.event_name = EventName()
+
+        assert outbox_publisher.dynamodb_event_name(record) == "INSERT"
+
     def test_non_insert_event_should_be_skipped(self) -> None:
         event_name = "MODIFY"
         assert event_name != "INSERT"
@@ -261,6 +276,8 @@ class TestOutboxPublisherPublishToSNS:
         os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
         yield
         os.environ.pop("SNS_TOPIC_ARN", None)
+        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
+        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_publish_to_sns_success(self) -> None:
@@ -280,6 +297,58 @@ class TestOutboxPublisherPublishToSNS:
 
         assert result == "test-message-id"
         mock_sns.publish.assert_called_once()
+        assert (
+            mock_sns.publish.call_args.kwargs["TopicArn"]
+            == "arn:aws:sns:us-west-2:123456789012:test-topic"
+        )
+
+    def test_publish_to_sns_routes_file_uploads_to_file_events_topic(self) -> None:
+        os.environ["FILE_EVENTS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:file-events"
+        os.environ["PROCESSING_EVENTS_TOPIC_ARN"] = (
+            "arn:aws:sns:us-west-2:123456789012:processing-events"
+        )
+        mock_sns = MagicMock()
+        mock_sns.publish.return_value = {"MessageId": "test-message-id"}
+
+        outbox_event = OutboxEvent(
+            event_id="upload-event-id",
+            event_type=OutboxEventType.FILE_UPLOADED,
+            aggregate_id="file-123",
+            aggregate_type="FileUpload",
+            payload={"fileId": "file-123"},
+        )
+
+        with patch.object(outbox_publisher, "get_sns_client", return_value=mock_sns):
+            outbox_publisher.publish_to_sns(outbox_event)
+
+        assert (
+            mock_sns.publish.call_args.kwargs["TopicArn"]
+            == "arn:aws:sns:us-west-2:123456789012:file-events"
+        )
+
+    def test_publish_to_sns_routes_processing_results_to_processing_topic(self) -> None:
+        os.environ["FILE_EVENTS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:file-events"
+        os.environ["PROCESSING_EVENTS_TOPIC_ARN"] = (
+            "arn:aws:sns:us-west-2:123456789012:processing-events"
+        )
+        mock_sns = MagicMock()
+        mock_sns.publish.return_value = {"MessageId": "test-message-id"}
+
+        outbox_event = OutboxEvent(
+            event_id="result-event-id",
+            event_type=OutboxEventType.ANALYSIS_COMPLETED,
+            aggregate_id="file-123",
+            aggregate_type="FileProcessing",
+            payload={"fileId": "file-123"},
+        )
+
+        with patch.object(outbox_publisher, "get_sns_client", return_value=mock_sns):
+            outbox_publisher.publish_to_sns(outbox_event)
+
+        assert (
+            mock_sns.publish.call_args.kwargs["TopicArn"]
+            == "arn:aws:sns:us-west-2:123456789012:processing-events"
+        )
 
     def test_publish_to_sns_adds_file_context_attributes(self) -> None:
         mock_sns = MagicMock()
@@ -337,6 +406,8 @@ class TestOutboxPublisherMarkEventPublished:
         os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
         yield
         os.environ.pop("SNS_TOPIC_ARN", None)
+        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
+        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_claim_event_for_publish_moves_pending_to_publishing(self) -> None:
@@ -442,6 +513,8 @@ class TestOutboxPublisherMarkEventFailed:
         os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
         yield
         os.environ.pop("SNS_TOPIC_ARN", None)
+        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
+        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
         os.environ.pop("OUTBOX_TABLE_NAME", None)
 
     def test_mark_event_failed(self) -> None:
@@ -476,6 +549,8 @@ class TestOutboxPublisherLambdaHandler:
         os.environ["POWERTOOLS_SERVICE_NAME"] = "outbox-publisher"
         yield
         os.environ.pop("SNS_TOPIC_ARN", None)
+        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
+        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
         os.environ.pop("OUTBOX_TABLE_NAME", None)
         os.environ.pop("POWERTOOLS_SERVICE_NAME", None)
 
@@ -487,9 +562,28 @@ class TestOutboxPublisherLambdaHandler:
 
     def test_lambda_handler_rejects_missing_sns_topic(self) -> None:
         os.environ["SNS_TOPIC_ARN"] = ""
+        os.environ["FILE_EVENTS_TOPIC_ARN"] = ""
+        os.environ["PROCESSING_EVENTS_TOPIC_ARN"] = ""
 
-        with pytest.raises(ValueError, match="SNS_TOPIC_ARN"):
+        with pytest.raises(ValueError, match="SNS topic ARN"):
             outbox_publisher.lambda_handler({"Records": []}, MagicMock())
+
+    def test_lambda_handler_accepts_split_topic_configuration(self) -> None:
+        os.environ["SNS_TOPIC_ARN"] = ""
+        os.environ["FILE_EVENTS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:file-events"
+        os.environ["PROCESSING_EVENTS_TOPIC_ARN"] = (
+            "arn:aws:sns:us-west-2:123456789012:processing-events"
+        )
+
+        with patch.object(
+            outbox_publisher,
+            "process_partial_response",
+            return_value={"batchItemFailures": []},
+        ) as process_partial_response:
+            result = outbox_publisher.lambda_handler({"Records": []}, MagicMock())
+
+        assert result == {"batchItemFailures": []}
+        process_partial_response.assert_called_once()
 
     def test_lambda_handler_rejects_missing_outbox_table(self) -> None:
         os.environ["OUTBOX_TABLE_NAME"] = ""
@@ -514,12 +608,24 @@ class TestOutboxPublisherLambdaHandler:
     def test_settings_values_take_precedence_over_environment(self) -> None:
         outbox_publisher._settings = MagicMock(
             sns_topic_arn="arn:aws:sns:us-west-2:123456789012:settings-topic",
+            file_events_topic_arn="arn:aws:sns:us-west-2:123456789012:settings-file-topic",
+            processing_events_topic_arn=(
+                "arn:aws:sns:us-west-2:123456789012:settings-processing-topic"
+            ),
             outbox_table_name="settings-outbox",
         )
 
         assert (
             outbox_publisher.get_sns_topic_arn()
             == "arn:aws:sns:us-west-2:123456789012:settings-topic"
+        )
+        assert (
+            outbox_publisher.get_file_events_topic_arn()
+            == "arn:aws:sns:us-west-2:123456789012:settings-file-topic"
+        )
+        assert (
+            outbox_publisher.get_processing_events_topic_arn()
+            == "arn:aws:sns:us-west-2:123456789012:settings-processing-topic"
         )
         assert outbox_publisher.get_outbox_table_name() == "settings-outbox"
 
@@ -533,6 +639,8 @@ class TestOutboxPublisherRetryHandler:
         os.environ["MAX_RETRY_COUNT"] = "3"
         yield
         os.environ.pop("SNS_TOPIC_ARN", None)
+        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
+        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
         os.environ.pop("OUTBOX_TABLE_NAME", None)
         os.environ.pop("POWERTOOLS_SERVICE_NAME", None)
         os.environ.pop("MAX_RETRY_COUNT", None)

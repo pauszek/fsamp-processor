@@ -167,6 +167,7 @@ ENV POWERTOOLS_SERVICE_NAME=fsamp-processor \
     ENVIRONMENT=prod \
     FIPS_REQUIRED=true \
     USE_FIPS_ENDPOINT=true \
+    PYTHONPATH=/opt/venv/lib/python3.14/site-packages:${LAMBDA_TASK_ROOT} \
     PYTHONUNBUFFERED=1
 
 CMD ["processor.lambda_handler.lambda_handler"]

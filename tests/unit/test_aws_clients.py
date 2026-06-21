@@ -40,16 +40,24 @@ class TestAWSClientFactoryInit:
         assert factory._config is FIPS_CONFIG
 
     @pytest.mark.parametrize("region", ["us-east-1", "eu-west-1"])
-    def test_init_with_fips_unsupported_region_fails_closed(self, region: str) -> None:
-        with pytest.raises(ValueError, match="FIPS endpoints requested"):
+    def test_init_with_unsupported_deployment_region_fails_closed(self, region: str) -> None:
+        with pytest.raises(ValueError, match="us-west-2 FIPS endpoint baseline"):
             AWSClientFactory(
                 region=region,
                 use_fips=True,
             )
 
-    def test_init_with_fips_disabled_allows_unsupported_region(self) -> None:
+    @pytest.mark.parametrize("region", ["us-east-1", "eu-west-1"])
+    def test_init_with_fips_disabled_keeps_region_pin(self, region: str) -> None:
+        with pytest.raises(ValueError, match="us-west-2 FIPS endpoint baseline"):
+            AWSClientFactory(
+                region=region,
+                use_fips=False,
+            )
+
+    def test_init_with_fips_disabled_keeps_us_west_2_region_pin(self) -> None:
         factory = AWSClientFactory(
-            region="eu-west-1",
+            region="us-west-2",
             use_fips=False,
         )
 
@@ -74,11 +82,11 @@ class TestAWSClientFactoryInit:
 
 class TestAWSClientFactoryGetClientKwargs:
     def test_get_client_kwargs_default(self) -> None:
-        factory = AWSClientFactory(region="us-east-1")
+        factory = AWSClientFactory(region="us-west-2")
 
         kwargs = factory._get_client_kwargs()
 
-        assert kwargs["region_name"] == "us-east-1"
+        assert kwargs["region_name"] == "us-west-2"
         assert kwargs["config"] is DEFAULT_CONFIG
         assert "endpoint_url" not in kwargs
 

@@ -62,7 +62,8 @@ class AWSClientFactory:
     - Client caching for reuse
 
     FIPS 140-3-oriented posture:
-    - When use_fips=True and the region is us-west-2, FIPS endpoints are used
+    - Real AWS clients are pinned to us-west-2
+    - When use_fips=True, FIPS endpoints are used in that region
     - LocalStack/custom endpoints never use FIPS endpoint mode
     - Formal FIPS claims remain limited to validated cryptographic modules
     """
@@ -87,10 +88,10 @@ class AWSClientFactory:
         self._endpoint_url = endpoint_url
         self._is_local = endpoint_url is not None
 
-        if use_fips and not self._is_local and not is_fips_endpoint_region(region):
+        if not self._is_local and not is_fips_endpoint_region(region):
             raise ValueError(
-                "AWS FIPS endpoints requested but region does not support "
-                f"the FSAMP FIPS endpoint baseline: {region}"
+                "FSAMP active AWS deployments are pinned to the "
+                f"{SUPPORTED_FIPS_ENDPOINT_REGION} FIPS endpoint baseline: {region}"
             )
 
         self._use_fips = use_fips and not self._is_local
