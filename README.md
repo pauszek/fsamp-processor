@@ -41,12 +41,27 @@ source .venv/bin/activate
 pip install -e ".[dev,test]"
 ```
 
-Start LocalStack from the infra repository, then apply local Terraform:
+### Dependency lockfile
+
+Runtime dependencies are hash-pinned in `requirements.lock` and development
+dependencies in `requirements-dev.lock` (`pip-compile --generate-hashes`;
+the dev lock is constrained to the runtime lock so both resolve the same
+runtime versions). Container images and CI install with
+`pip install --require-hashes` so every dependency is verified against its
+recorded SHA-256 before installation (NIST SR-3/SR-4). `requirements.txt`
+and `requirements-dev.txt` stay the human-edited specification — after
+changing them, regenerate the lockfiles:
+
+```bash
+make lock
+```
+
+Provision the local environment from the infra repository (LocalStack Pro,
+Terraform-managed, seeds test users):
 
 ```bash
 cd ../fsamp-infra
-make up
-make apply-local
+make local-all
 ```
 
 Run the processor locally:

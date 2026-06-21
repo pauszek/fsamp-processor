@@ -3,7 +3,7 @@ Factory for creating AWS clients with proper configuration.
 Supports both real AWS and LocalStack endpoints.
 
 FIPS 140-3-oriented posture:
-- Uses AWS FIPS endpoints when available (us-* regions)
+- Uses AWS FIPS endpoints in the us-west-2 deployment region
 - Configurable via USE_FIPS_ENDPOINT environment variable
 - Automatically disabled for LocalStack
 """
@@ -43,6 +43,13 @@ FIPS_CONFIG = Config(
     use_fips_endpoint=True,
 )
 
+SUPPORTED_FIPS_ENDPOINT_REGION = "us-west-2"
+
+
+def is_fips_endpoint_region(region: str) -> bool:
+    """Return True when the project permits AWS FIPS endpoint usage in region."""
+    return region == SUPPORTED_FIPS_ENDPOINT_REGION
+
 
 class AWSClientFactory:
     """
@@ -50,14 +57,14 @@ class AWSClientFactory:
 
     Handles:
     - LocalStack endpoint configuration
-    - AWS FIPS endpoints where supported (us-* regions only)
+    - AWS FIPS endpoints in the supported deployment region
     - Consistent retry and timeout settings
     - Client caching for reuse
 
     FIPS 140-3-oriented posture:
-    - When use_fips=True and region starts with 'us-', FIPS endpoints are used
-    - FIPS endpoints are validated by NIST for cryptographic operations
-    - KMS FIPS endpoints use HSMs validated to FIPS 140-3 Level 3
+    - When use_fips=True and the region is us-west-2, FIPS endpoints are used
+    - LocalStack/custom endpoints never use FIPS endpoint mode
+    - Formal FIPS claims remain limited to validated cryptographic modules
     """
 
     def __init__(
@@ -80,7 +87,13 @@ class AWSClientFactory:
         self._endpoint_url = endpoint_url
         self._is_local = endpoint_url is not None
 
-        self._use_fips = use_fips and region.startswith("us-") and not self._is_local
+        if use_fips and not self._is_local and not is_fips_endpoint_region(region):
+            raise ValueError(
+                "AWS FIPS endpoints requested but region does not support "
+                f"the FSAMP FIPS endpoint baseline: {region}"
+            )
+
+        self._use_fips = use_fips and not self._is_local
 
         if config:
             self._config = config

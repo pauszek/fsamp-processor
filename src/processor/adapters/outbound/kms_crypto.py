@@ -6,7 +6,7 @@ and the Python cryptography library.
 
 import hashlib
 import os
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from botocore.exceptions import ClientError
@@ -42,7 +42,7 @@ class KMSCryptoProvider(CryptoProvider):
     3. Encrypted DEK is stored alongside ciphertext
 
     FIPS 140-3-oriented posture:
-    - Uses AWS KMS (FIPS 140-3 Level 3 validated or in validation)
+    - Delegates key operations to AWS KMS instead of custom key handling
     - AES-256-GCM for symmetric encryption
     - SHA-256/384/512 for hashing
     - No disallowed legacy algorithms (MD5, SHA-1, DES, etc.)
@@ -191,7 +191,7 @@ class KMSCryptoProvider(CryptoProvider):
             ciphertext = aesgcm.encrypt(nonce, plaintext, None)
 
             key_len_bytes = len(encrypted_key).to_bytes(4, byteorder="big")
-            envelope = cast(bytes, key_len_bytes + encrypted_key + nonce + ciphertext)
+            envelope = bytes(key_len_bytes + encrypted_key + nonce + ciphertext)
 
             logger.debug(
                 "Data encrypted",
@@ -249,7 +249,7 @@ class KMSCryptoProvider(CryptoProvider):
             plaintext_key = self._decrypt_data_key(encrypted_key, context)
 
             aesgcm = AESGCM(plaintext_key)
-            plaintext = aesgcm.decrypt(nonce, encrypted_data, None)
+            plaintext = bytes(aesgcm.decrypt(nonce, encrypted_data, None))
 
             logger.debug(
                 "Data decrypted",
@@ -257,7 +257,7 @@ class KMSCryptoProvider(CryptoProvider):
                 plaintext_size=len(plaintext),
             )
 
-            return cast(bytes, plaintext)
+            return plaintext
 
         except Exception as e:
             if isinstance(e, CryptoError):
@@ -396,7 +396,7 @@ class LocalCryptoProvider(CryptoProvider):
         ciphertext = aesgcm.encrypt(nonce, plaintext, None)
 
         key_len_bytes = len(encrypted_key).to_bytes(4, byteorder="big")
-        return cast(bytes, key_len_bytes + encrypted_key + nonce + ciphertext)
+        return bytes(key_len_bytes + encrypted_key + nonce + ciphertext)
 
     def decrypt(self, ciphertext: bytes, context: dict[str, str] | None = None) -> bytes:
         """Decrypt using local key."""
@@ -414,7 +414,7 @@ class LocalCryptoProvider(CryptoProvider):
         plaintext_key = bytes(a ^ b for a, b in zip(encrypted_key, self._master_key * 2))
 
         aesgcm = AESGCM(plaintext_key)
-        return cast(bytes, aesgcm.decrypt(nonce, encrypted_data, None))
+        return bytes(aesgcm.decrypt(nonce, encrypted_data, None))
 
     def compute_hash(self, data: bytes, algorithm: str = "SHA-256") -> str:
         """Compute hash (same as KMS provider)."""
