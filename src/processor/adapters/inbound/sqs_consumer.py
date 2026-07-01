@@ -144,14 +144,8 @@ class SQSConsumer(MessageConsumer):
             try:
                 messages = self._receive_messages()
 
-                if not messages:
-                    consecutive_errors = 0
-                    continue
-
-                for message in messages:
-                    if self._shutdown_event.is_set():
-                        break
-                    self._process_message(message)
+                if messages:
+                    self._process_messages(messages)
 
                 consecutive_errors = 0
 
@@ -177,6 +171,13 @@ class SQSConsumer(MessageConsumer):
             except Exception as e:
                 logger.exception("Unexpected error in consume loop", error=str(e))
                 time.sleep(5)
+
+    def _process_messages(self, messages: list[dict[str, Any]]) -> None:
+        """Process received messages until the consumer is asked to stop."""
+        for message in messages:
+            if self._shutdown_event.is_set():
+                break
+            self._process_message(message)
 
     @retry(
         retry=retry_if_exception_type(ClientError),
