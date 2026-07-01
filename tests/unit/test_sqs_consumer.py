@@ -291,6 +291,50 @@ class TestSQSConsumerSignalHandler:
 
 class TestSQSConsumerProcessMessage:
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
+    def test_consume_loop_processes_received_messages(self, mock_signal) -> None:
+        client = MagicMock()
+        consumer = SQSConsumer(
+            sqs_client=client,
+            queue_url="http://queue",
+            handler=MagicMock(),
+        )
+        messages = [{"MessageId": "msg-1"}]
+
+        def stop_after_processing(_messages: list[dict[str, str]]) -> None:
+            consumer._running = False
+
+        consumer._running = True
+        consumer._receive_messages = MagicMock(return_value=messages)  # type: ignore[method-assign]
+        consumer._process_messages = MagicMock(side_effect=stop_after_processing)  # type: ignore[method-assign]
+
+        consumer._consume_loop()
+
+        consumer._receive_messages.assert_called_once()
+        consumer._process_messages.assert_called_once_with(messages)
+
+    @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
+    def test_process_messages_stops_after_shutdown_request(self, mock_signal) -> None:
+        client = MagicMock()
+        consumer = SQSConsumer(
+            sqs_client=client,
+            queue_url="http://queue",
+            handler=MagicMock(),
+        )
+        messages = [
+            {"MessageId": "msg-1"},
+            {"MessageId": "msg-2"},
+        ]
+
+        def request_shutdown(_message: dict[str, str]) -> None:
+            consumer._shutdown_event.set()
+
+        consumer._process_message = MagicMock(side_effect=request_shutdown)  # type: ignore[method-assign]
+
+        consumer._process_messages(messages)
+
+        consumer._process_message.assert_called_once_with(messages[0])
+
+    @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_process_message_success(self, mock_signal) -> None:
         client = MagicMock()
         handler = MagicMock()

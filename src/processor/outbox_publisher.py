@@ -55,6 +55,7 @@ processor = BatchProcessor(event_type=EventType.DynamoDBStreams)
 MAX_RETRY_COUNT = int(os.environ.get("MAX_RETRY_COUNT", "3"))
 PUBLISH_CLAIM_TTL_SECONDS = int(os.environ.get("PUBLISH_CLAIM_TTL_SECONDS", "300"))
 DDB_STATUS_NAME = "#status"
+DDB_STATUS_VALUE = ":status"
 DDB_GSI1PK_VALUE = ":gsi1pk"
 _sns_client: SNSClient | None = None
 _dynamodb_client: DynamoDBClient | None = None
@@ -254,9 +255,8 @@ def record_handler(record: DynamoDBRecord) -> dict[str, Any]:
         try:
             dynamo_event_id = OutboxEvent._dynamodb_value(new_image.get("eventId"))
             if dynamo_event_id:
-                aggregate_type = (
-                    OutboxEvent._dynamodb_value(new_image.get("aggregateType")) or "FileProcessing"
-                )
+                dynamo_aggregate_type = OutboxEvent._dynamodb_value(new_image.get("aggregateType"))
+                aggregate_type = dynamo_aggregate_type or "FileProcessing"
                 mark_event_failed(str(dynamo_event_id), str(e), aggregate_type=str(aggregate_type))
         except Exception:
             logger.exception(
@@ -378,7 +378,7 @@ def mark_event_published(outbox_event: OutboxEvent) -> None:
                 "SK": {"S": f"EVENT#{outbox_event.event_id}"},
             },
             UpdateExpression=(
-                f"SET {DDB_STATUS_NAME} = :status, publishedAt = :published, "
+                f"SET {DDB_STATUS_NAME} = {DDB_STATUS_VALUE}, publishedAt = :published, "
                 f"GSI1PK = {DDB_GSI1PK_VALUE}, #ttl = :ttl "
                 "REMOVE publishingStartedAt, publisherClaimExpiresAt"
             ),
@@ -388,7 +388,7 @@ def mark_event_published(outbox_event: OutboxEvent) -> None:
                 "#ttl": "ttl",
             },
             ExpressionAttributeValues={
-                ":status": {"S": OutboxStatus.PUBLISHED.value},
+                DDB_STATUS_VALUE: {"S": OutboxStatus.PUBLISHED.value},
                 ":publishing": {"S": OutboxStatus.PUBLISHING.value},
                 ":published": {"S": now},
                 DDB_GSI1PK_VALUE: {"S": f"STATUS#{OutboxStatus.PUBLISHED.value}"},
@@ -415,7 +415,7 @@ def mark_event_failed(event_id: str, error: str, aggregate_type: str = "FileProc
             "SK": {"S": f"EVENT#{event_id}"},
         },
         UpdateExpression=(
-            f"SET {DDB_STATUS_NAME} = :status, lastError = :error, "
+            f"SET {DDB_STATUS_NAME} = {DDB_STATUS_VALUE}, lastError = :error, "
             "retryCount = if_not_exists(retryCount, :zero) + :inc, "
             f"GSI1PK = {DDB_GSI1PK_VALUE} "
             "REMOVE publishingStartedAt, publisherClaimExpiresAt"
@@ -424,7 +424,7 @@ def mark_event_failed(event_id: str, error: str, aggregate_type: str = "FileProc
             DDB_STATUS_NAME: "status",
         },
         ExpressionAttributeValues={
-            ":status": {"S": OutboxStatus.FAILED.value},
+            DDB_STATUS_VALUE: {"S": OutboxStatus.FAILED.value},
             ":error": {"S": error[:1000]},
             ":inc": {"N": "1"},
             ":zero": {"N": "0"},
@@ -499,10 +499,10 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
     failed_response = dynamodb.query(
         TableName=get_outbox_table_name(),
         IndexName="GSI1",
-        KeyConditionExpression="GSI1PK = :status",
+        KeyConditionExpression=f"GSI1PK = {DDB_STATUS_VALUE}",
         FilterExpression="retryCount < :max_retries",
         ExpressionAttributeValues={
-            ":status": {"S": f"STATUS#{OutboxStatus.FAILED.value}"},
+            DDB_STATUS_VALUE: {"S": f"STATUS#{OutboxStatus.FAILED.value}"},
             ":max_retries": {"N": str(MAX_RETRY_COUNT)},
         },
         Limit=100,
@@ -511,10 +511,10 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
     publishing_response = dynamodb.query(
         TableName=get_outbox_table_name(),
         IndexName="GSI1",
-        KeyConditionExpression="GSI1PK = :status",
+        KeyConditionExpression=f"GSI1PK = {DDB_STATUS_VALUE}",
         FilterExpression="publisherClaimExpiresAt < :now",
         ExpressionAttributeValues={
-            ":status": {"S": f"STATUS#{OutboxStatus.PUBLISHING.value}"},
+            DDB_STATUS_VALUE: {"S": f"STATUS#{OutboxStatus.PUBLISHING.value}"},
             ":now": {"N": str(int(datetime.now(UTC).timestamp()))},
         },
         Limit=100,

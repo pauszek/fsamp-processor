@@ -179,7 +179,7 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         file_processor = get_file_processor()
         result = file_processor.handle(file_event)
 
-        total_duration_ms = int((time.time() - start_time) * 1000)
+        total_duration_ms = int(1000 * (time.time() - start_time))
 
         metrics.add_metric(name="FilesProcessed", unit=MetricUnit.Count, value=1)
         metrics.add_metric(name="FilesProcessedSuccess", unit=MetricUnit.Count, value=1)
@@ -223,7 +223,7 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         metrics.add_metric(name="FilesProcessedFailed", unit=MetricUnit.Count, value=1)
         metrics.add_metric(name="NonRetryableErrors", unit=MetricUnit.Count, value=1)
 
-        total_duration_ms = int((time.time() - start_time) * 1000)
+        total_duration_ms = int(1000 * (time.time() - start_time))
         metrics.add_metric(
             name="FailedProcessingDuration", unit=MetricUnit.Milliseconds, value=total_duration_ms
         )

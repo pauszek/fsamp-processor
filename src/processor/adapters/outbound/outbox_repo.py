@@ -31,6 +31,9 @@ from processor.domain.models import MetadataRecord, OutboxEvent, OutboxStatus
 from processor.ports.outbound import OutboxRepository
 
 logger = structlog.get_logger(__name__)
+DDB_STATUS_NAME = "#status"
+DDB_STATUS_VALUE = ":status"
+DDB_GSI1PK_VALUE = ":gsi1pk"
 
 
 class DynamoDBOutboxRepository(OutboxRepository):
@@ -170,9 +173,9 @@ class DynamoDBOutboxRepository(OutboxRepository):
             response = self._client.query(
                 TableName=self._outbox_table_name,
                 IndexName="GSI1",
-                KeyConditionExpression="GSI1PK = :status",
+                KeyConditionExpression=f"GSI1PK = {DDB_STATUS_VALUE}",
                 ExpressionAttributeValues={
-                    ":status": {"S": f"STATUS#{OutboxStatus.PENDING.value}"},
+                    DDB_STATUS_VALUE: {"S": f"STATUS#{OutboxStatus.PENDING.value}"},
                 },
                 ScanIndexForward=True,  # Oldest first (FIFO processing)
                 Limit=limit,
@@ -218,16 +221,17 @@ class DynamoDBOutboxRepository(OutboxRepository):
                     "SK": {"S": f"EVENT#{event_id}"},
                 },
                 UpdateExpression=(
-                    "SET #status = :status, publishedAt = :published, GSI1PK = :gsi1pk, #ttl = :ttl"
+                    f"SET {DDB_STATUS_NAME} = {DDB_STATUS_VALUE}, "
+                    f"publishedAt = :published, GSI1PK = {DDB_GSI1PK_VALUE}, #ttl = :ttl"
                 ),
                 ExpressionAttributeNames={
-                    "#status": "status",
+                    DDB_STATUS_NAME: "status",
                     "#ttl": "ttl",
                 },
                 ExpressionAttributeValues={
-                    ":status": {"S": OutboxStatus.PUBLISHED.value},
+                    DDB_STATUS_VALUE: {"S": OutboxStatus.PUBLISHED.value},
                     ":published": {"S": now},
-                    ":gsi1pk": {"S": f"STATUS#{OutboxStatus.PUBLISHED.value}"},
+                    DDB_GSI1PK_VALUE: {"S": f"STATUS#{OutboxStatus.PUBLISHED.value}"},
                     ":ttl": {"N": str(ttl)},
                 },
             )
@@ -266,17 +270,17 @@ class DynamoDBOutboxRepository(OutboxRepository):
                     "SK": {"S": f"EVENT#{event_id}"},
                 },
                 UpdateExpression=(
-                    "SET #status = :status, lastError = :error, "
-                    "retryCount = retryCount + :inc, GSI1PK = :gsi1pk"
+                    f"SET {DDB_STATUS_NAME} = {DDB_STATUS_VALUE}, lastError = :error, "
+                    f"retryCount = retryCount + :inc, GSI1PK = {DDB_GSI1PK_VALUE}"
                 ),
                 ExpressionAttributeNames={
-                    "#status": "status",
+                    DDB_STATUS_NAME: "status",
                 },
                 ExpressionAttributeValues={
-                    ":status": {"S": OutboxStatus.FAILED.value},
+                    DDB_STATUS_VALUE: {"S": OutboxStatus.FAILED.value},
                     ":error": {"S": error},
                     ":inc": {"N": "1"},
-                    ":gsi1pk": {"S": f"STATUS#{OutboxStatus.FAILED.value}"},
+                    DDB_GSI1PK_VALUE: {"S": f"STATUS#{OutboxStatus.FAILED.value}"},
                 },
             )
 
@@ -308,9 +312,9 @@ class DynamoDBOutboxRepository(OutboxRepository):
             response = self._client.query(
                 TableName=self._outbox_table_name,
                 IndexName="GSI1",
-                KeyConditionExpression="GSI1PK = :status",
+                KeyConditionExpression=f"GSI1PK = {DDB_STATUS_VALUE}",
                 ExpressionAttributeValues={
-                    ":status": {"S": f"STATUS#{OutboxStatus.FAILED.value}"},
+                    DDB_STATUS_VALUE: {"S": f"STATUS#{OutboxStatus.FAILED.value}"},
                 },
                 ScanIndexForward=True,
                 Limit=limit,
@@ -351,9 +355,9 @@ class DynamoDBOutboxRepository(OutboxRepository):
             response = self._client.query(
                 TableName=self._outbox_table_name,
                 IndexName="GSI1",
-                KeyConditionExpression="GSI1PK = :status AND GSI1SK < :cutoff",
+                KeyConditionExpression=f"GSI1PK = {DDB_STATUS_VALUE} AND GSI1SK < :cutoff",
                 ExpressionAttributeValues={
-                    ":status": {"S": f"STATUS#{OutboxStatus.PUBLISHED.value}"},
+                    DDB_STATUS_VALUE: {"S": f"STATUS#{OutboxStatus.PUBLISHED.value}"},
                     ":cutoff": {"S": cutoff},
                 },
                 ProjectionExpression="PK, SK",
@@ -417,12 +421,15 @@ class DynamoDBOutboxRepository(OutboxRepository):
             now = datetime.now(UTC).isoformat()
             outbox_item = outbox_event.to_dynamodb_item()
 
-            update_expr = "SET #status = :status, updatedAt = :updated, GSI1PK = :gsi1pk"
-            expr_names = {"#status": "status"}
+            update_expr = (
+                f"SET {DDB_STATUS_NAME} = {DDB_STATUS_VALUE}, "
+                f"updatedAt = :updated, GSI1PK = {DDB_GSI1PK_VALUE}"
+            )
+            expr_names = {DDB_STATUS_NAME: "status"}
             expr_values = {
-                ":status": {"S": status},
+                DDB_STATUS_VALUE: {"S": status},
                 ":updated": {"S": now},
-                ":gsi1pk": {"S": f"STATUS#{status}"},
+                DDB_GSI1PK_VALUE: {"S": f"STATUS#{status}"},
             }
 
             if error_message:
