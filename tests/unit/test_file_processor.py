@@ -54,7 +54,7 @@ class TestFileProcessorServiceInit:
 
 class TestFileProcessorServiceHandle:
     @pytest.fixture
-    def mock_dependencies(self):
+    def mock_dependencies(self, sample_file_event: FileEvent):
         storage = MagicMock()
         metadata = MagicMock()
         publisher = MagicMock()
@@ -66,7 +66,7 @@ class TestFileProcessorServiceHandle:
             content_type="application/pdf",
             content_length=100,
         )
-        crypto.compute_hash.return_value = "abc123hash"
+        crypto.compute_hash.return_value = sample_file_event.file_metadata.checksum_sha256
 
         return {
             "storage": storage,
@@ -135,6 +135,17 @@ class TestFileProcessorServiceHandle:
 
         assert "File too large" in str(exc_info.value)
 
+    def test_handle_checksum_mismatch(
+        self, service: FileProcessorService, sample_file_event: FileEvent
+    ) -> None:
+        service._crypto.compute_hash.return_value = "0" * 64
+
+        with pytest.raises(NonRetryableError) as exc_info:
+            service.handle(sample_file_event)
+
+        assert "Checksum mismatch" in str(exc_info.value)
+        service._outbox.save_with_outbox.assert_not_called()
+
     def test_handle_storage_error(
         self, service: FileProcessorService, sample_file_event: FileEvent
     ) -> None:
@@ -202,7 +213,7 @@ class TestFileProcessorServiceHandle:
 
 class TestFileProcessorServiceProcessUploadedFile:
     @pytest.fixture
-    def mock_dependencies(self):
+    def mock_dependencies(self, sample_file_event: FileEvent):
         storage = MagicMock()
         metadata = MagicMock()
         publisher = MagicMock()
@@ -214,7 +225,7 @@ class TestFileProcessorServiceProcessUploadedFile:
             content_type="application/pdf",
             content_length=100,
         )
-        crypto.compute_hash.return_value = "abc123hash"
+        crypto.compute_hash.return_value = sample_file_event.file_metadata.checksum_sha256
 
         return {
             "storage": storage,
@@ -276,7 +287,7 @@ class TestFileProcessorServiceAnalyzeFile:
         content = FileContent(data=b"", content_type="text/plain", content_length=0)
         log = MagicMock()
 
-        result = service._analyze_file(content, log)
+        result = service._analyze_file(content, "test-hash", log)
 
         assert "File is empty" in result.findings
 
@@ -286,7 +297,7 @@ class TestFileProcessorServiceAnalyzeFile:
         )
         log = MagicMock()
 
-        result = service._analyze_file(content, log)
+        result = service._analyze_file(content, "test-hash", log)
 
         assert any("executable" in f.lower() for f in result.findings)
         assert not result.is_safe
@@ -299,7 +310,7 @@ class TestFileProcessorServiceAnalyzeFile:
         )
         log = MagicMock()
 
-        result = service._analyze_file(content, log)
+        result = service._analyze_file(content, "test-hash", log)
 
         assert any("executable" in f.lower() for f in result.findings)
         assert not result.is_safe
@@ -310,7 +321,7 @@ class TestFileProcessorServiceAnalyzeFile:
         )
         log = MagicMock()
 
-        result = service._analyze_file(content, log)
+        result = service._analyze_file(content, "test-hash", log)
 
         assert result.is_safe
 
@@ -318,7 +329,7 @@ class TestFileProcessorServiceAnalyzeFile:
         content = FileContent(data=b"Hello, world!", content_type="text/plain", content_length=13)
         log = MagicMock()
 
-        result = service._analyze_file(content, log)
+        result = service._analyze_file(content, "test-hash", log)
 
         assert result.is_safe
 
@@ -406,7 +417,7 @@ class TestFileProcessorServiceHandleFailure:
 
 class TestFileProcessorServiceDirectPublishing:
     @pytest.fixture
-    def mock_dependencies(self):
+    def mock_dependencies(self, sample_file_event: FileEvent):
         storage = MagicMock()
         metadata = MagicMock()
         publisher = MagicMock()
@@ -417,7 +428,7 @@ class TestFileProcessorServiceDirectPublishing:
             content_type="text/plain",
             content_length=12,
         )
-        crypto.compute_hash.return_value = "test-hash"
+        crypto.compute_hash.return_value = sample_file_event.file_metadata.checksum_sha256
 
         return {
             "storage": storage,
