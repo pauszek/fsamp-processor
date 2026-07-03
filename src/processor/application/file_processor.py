@@ -196,7 +196,15 @@ class FileProcessorService:
         file_hash = self._crypto.compute_hash(file_content.data, "SHA-256")
         log.debug("File hash computed", hash=file_hash[:16] + "...")
 
-        analysis_result = self._analyze_file(file_content, log)
+        expected_hash = event.file_metadata.checksum_sha256
+        if file_hash != expected_hash:
+            raise NonRetryableError(
+                message=f"Checksum mismatch: event declares SHA-256 {expected_hash} "
+                f"but downloaded content hashes to {file_hash}",
+            )
+        log.debug("File integrity verified against event checksum")
+
+        analysis_result = self._analyze_file(file_content, file_hash, log)
 
         metadata_record.file_hash = file_hash
         metadata_record.is_safe = analysis_result.is_safe
@@ -267,6 +275,7 @@ class FileProcessorService:
     def _analyze_file(
         self,
         content: FileContent,
+        file_hash: str,
         log: Any,
     ) -> AnalysisResult:
         """
@@ -291,8 +300,6 @@ class FileProcessorService:
         if data[:4] == b"%PDF":  # PDF
             log.debug("PDF file detected")
 
-        content_hash = self._crypto.compute_hash(data, "SHA-256")
-
         is_safe = len([f for f in findings if "executable" in f.lower()]) == 0
 
         log.debug(
@@ -302,7 +309,7 @@ class FileProcessorService:
         )
 
         return AnalysisResult(
-            file_hash_sha256=content_hash,
+            file_hash_sha256=file_hash,
             is_safe=is_safe,
             scan_engine="fsamp-internal",
             findings=findings,
