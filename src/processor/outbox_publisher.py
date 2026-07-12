@@ -427,12 +427,8 @@ def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, A
     )
 
 
-@logger.inject_lambda_context(log_event=False)
-@tracer.capture_lambda_handler
-@metrics.log_metrics
-def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
-    """Recover PENDING, FAILED, and expired PUBLISHING events across all shards."""
-    del event, context
+def retry_pending_events() -> dict[str, Any]:
+    """Recover retryable events without requiring an AWS Lambda context."""
     items = (
         _query_retryable(OutboxStatus.PENDING)
         + _query_retryable(OutboxStatus.FAILED)
@@ -461,8 +457,6 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
                         "Could not persist retry failure",
                         event_id=outbox_event.event_id,
                     )
-    metrics.add_metric(name="EventsRetried", unit=MetricUnit.Count, value=succeeded)
-    metrics.add_metric(name="EventsRetryFailed", unit=MetricUnit.Count, value=failed)
     return {
         "statusCode": 200,
         "body": {
@@ -471,3 +465,24 @@ def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, An
             "total_processed": len(unique),
         },
     }
+
+
+@logger.inject_lambda_context(log_event=False)
+@tracer.capture_lambda_handler
+@metrics.log_metrics
+def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
+    """AWS Lambda adapter for the context-free retry cycle."""
+    del event, context
+    response = retry_pending_events()
+    body = cast(dict[str, int], response["body"])
+    metrics.add_metric(
+        name="EventsRetried",
+        unit=MetricUnit.Count,
+        value=body["success_count"],
+    )
+    metrics.add_metric(
+        name="EventsRetryFailed",
+        unit=MetricUnit.Count,
+        value=body["failure_count"],
+    )
+    return response

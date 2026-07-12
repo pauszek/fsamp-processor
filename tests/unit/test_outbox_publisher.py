@@ -303,6 +303,24 @@ def test_retry_handler_deduplicates_and_publishes_event(
     mark_published.assert_called_once()
 
 
+def test_retry_cycle_does_not_require_lambda_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        publisher,
+        "_query_retryable",
+        MagicMock(side_effect=[[], [], []]),
+    )
+
+    response = publisher.retry_pending_events()
+
+    assert response["body"] == {
+        "success_count": 0,
+        "failure_count": 0,
+        "total_processed": 0,
+    }
+
+
 def test_retry_handler_records_publish_and_fencing_failures(
     sample_file_event: FileEvent,
     monkeypatch: pytest.MonkeyPatch,
