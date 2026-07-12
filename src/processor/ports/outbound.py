@@ -170,14 +170,18 @@ class MetadataRepository(ABC):
     @abstractmethod
     def get_history(self, file_id: str, limit: int = 10) -> list[MetadataRecord]:
         """
-        Get metadata record history for a file.
+        Get the current metadata snapshot for a file.
+
+        The canonical metadata layout stores one ``FILE#id/METADATA`` item, so
+        implementations return either an empty list or a single current record.
+        The method name is retained for backward compatibility.
 
         Args:
             file_id: The file ID (partition key).
-            limit: Maximum number of records to return.
+            limit: Set to zero or less to suppress the result.
 
         Returns:
-            List of metadata records, newest first.
+            A list containing at most the current metadata record.
 
         Raises:
             StorageError: If retrieval fails.

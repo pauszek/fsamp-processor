@@ -49,7 +49,7 @@ class TestDynamoDBMetadataRepository:
         result = repo.get_by_id("nonexistent-id")
         assert result is None
 
-    def test_get_history(self, repo: DynamoDBMetadataRepository) -> None:
+    def test_repeated_saves_update_current_state(self, repo: DynamoDBMetadataRepository) -> None:
         file_id = "history-test-file"
 
         for i in range(5):
@@ -66,10 +66,12 @@ class TestDynamoDBMetadataRepository:
             )
             repo.save(record)
 
-        history = repo.get_history(file_id, limit=10)
+        current = repo.get_history(file_id, limit=10)
 
-        assert len(history) == 5
-        assert history[0].timestamp > history[-1].timestamp
+        assert len(current) == 1
+        assert current[0].timestamp == "2024-01-05T12:00:00Z"
+        assert current[0].correlation_id == "corr-4"
+        assert current[0].file_size_bytes == 1004
 
     def test_update_status(
         self, repo: DynamoDBMetadataRepository, sample_record: MetadataRecord
