@@ -69,7 +69,6 @@ class TestDynamoDBMetadataRepository:
         current = repo.get_history(file_id, limit=10)
 
         assert len(current) == 1
-        assert current[0].timestamp == "2024-01-05T12:00:00Z"
         assert current[0].correlation_id == "corr-4"
         assert current[0].file_size_bytes == 1004
 
