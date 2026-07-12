@@ -99,12 +99,12 @@ class TestRecordHandlerLogic:
     @pytest.fixture
     def sample_file_event_dict(self) -> dict:
         return {
-            "schema_version": "1.1.2",
+            "schema_version": "1.2.0",
             "file_id": str(uuid4()),
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),
             "timestamp": datetime.now(UTC).isoformat(),
-            "source": "fsamp-processor",
+            "source": "fsamp-gateway",
             "event_type": "FILE_UPLOADED",
             "file_metadata": {
                 "original_filename": "test.pdf",

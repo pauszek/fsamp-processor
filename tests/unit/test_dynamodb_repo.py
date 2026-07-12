@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,308 +9,131 @@ from processor.domain.exceptions import StorageError
 from processor.domain.models import MetadataRecord, ProcessingStatus
 
 
-class TestDynamoDBMetadataRepositoryInit:
-    def test_init(self) -> None:
-        client = MagicMock()
-        repo = DynamoDBMetadataRepository(
-            dynamodb_client=client,
-            table_name="test-table",
-        )
-
-        assert repo._client is client
-        assert repo._table_name == "test-table"
-
-
-class TestDynamoDBMetadataRepositorySave:
-    @pytest.fixture
-    def repo(self) -> DynamoDBMetadataRepository:
-        client = MagicMock()
-        return DynamoDBMetadataRepository(
-            dynamodb_client=client,
-            table_name="test-table",
-        )
-
-    @pytest.fixture
-    def metadata_record(self) -> MetadataRecord:
-        return MetadataRecord(
-            file_id="file-123",
-            timestamp=datetime.utcnow().isoformat(),
-            correlation_id="corr-456",
-            original_filename="test.pdf",
-            file_size_bytes=1024,
-            mime_type="application/pdf",
-            bucket_name="test-bucket",
-            object_key="test-key",
-            status=ProcessingStatus.PENDING,
-        )
-
-    def test_save_success(
-        self,
-        repo: DynamoDBMetadataRepository,
-        metadata_record: MetadataRecord,
-    ) -> None:
-        repo.save(metadata_record)
-
-        repo._client.put_item.assert_called_once()
-        call_kwargs = repo._client.put_item.call_args.kwargs
-        assert call_kwargs["TableName"] == "test-table"
-        assert "Item" in call_kwargs
-
-    def test_save_sets_timestamps(
-        self,
-        repo: DynamoDBMetadataRepository,
-        metadata_record: MetadataRecord,
-    ) -> None:
-        metadata_record.created_at = None
-
-        repo.save(metadata_record)
-
-        assert metadata_record.updated_at is not None
-        assert metadata_record.created_at is not None
-
-    def test_save_error(
-        self,
-        repo: DynamoDBMetadataRepository,
-        metadata_record: MetadataRecord,
-    ) -> None:
-        repo._client.put_item.side_effect = ClientError(
-            {"Error": {"Code": "InternalServerError"}},
-            "PutItem",
-        )
-
-        with pytest.raises(StorageError):
-            repo.save(metadata_record)
+@pytest.fixture
+def record() -> MetadataRecord:
+    return MetadataRecord(
+        file_id="file-123",
+        timestamp=datetime.now(UTC).isoformat(),
+        correlation_id="corr-456",
+        original_filename="document.pdf",
+        file_size_bytes=42,
+        mime_type="application/pdf",
+        bucket_name="files-bucket",
+        object_key="uploads/document.pdf",
+        status=ProcessingStatus.PROCESSING,
+        checksum_sha256="a" * 64,
+        kms_key_id="arn:aws:kms:us-west-2:123456789012:key/key-id",
+    )
 
 
-class TestDynamoDBMetadataRepositoryGetById:
-    @pytest.fixture
-    def repo(self) -> DynamoDBMetadataRepository:
-        client = MagicMock()
-        return DynamoDBMetadataRepository(
-            dynamodb_client=client,
-            table_name="test-table",
-        )
-
-    def test_get_by_id_success(self, repo: DynamoDBMetadataRepository) -> None:
-        timestamp = datetime.utcnow().isoformat()
-        repo._client.query.return_value = {
-            "Items": [
-                {
-                    "PK": {"S": "FILE#file-123"},
-                    "SK": {"S": f"TS#{timestamp}"},
-                    "fileId": {"S": "file-123"},
-                    "timestamp": {"S": timestamp},
-                    "correlationId": {"S": "corr-456"},
-                    "originalFilename": {"S": "test.pdf"},
-                    "fileSizeBytes": {"N": "1024"},
-                    "mimeType": {"S": "application/pdf"},
-                    "bucketName": {"S": "test-bucket"},
-                    "objectKey": {"S": "test-key"},
-                    "status": {"S": "PENDING"},
-                }
-            ]
-        }
-
-        record = repo.get_by_id("file-123")
-
-        assert record is not None
-        assert record.file_id == "file-123"
-
-    def test_get_by_id_not_found(self, repo: DynamoDBMetadataRepository) -> None:
-        repo._client.query.return_value = {"Items": []}
-
-        record = repo.get_by_id("missing-file")
-
-        assert record is None
-
-    def test_get_by_id_error(self, repo: DynamoDBMetadataRepository) -> None:
-        repo._client.query.side_effect = ClientError(
-            {"Error": {"Code": "InternalServerError"}},
-            "Query",
-        )
-
-        with pytest.raises(StorageError):
-            repo.get_by_id("file-123")
+@pytest.fixture
+def client() -> MagicMock:
+    return MagicMock()
 
 
-class TestDynamoDBMetadataRepositoryGetHistory:
-    @pytest.fixture
-    def repo(self) -> DynamoDBMetadataRepository:
-        client = MagicMock()
-        return DynamoDBMetadataRepository(
-            dynamodb_client=client,
-            table_name="test-table",
-        )
-
-    def test_get_history_success(self, repo: DynamoDBMetadataRepository) -> None:
-        timestamp = datetime.utcnow().isoformat()
-        repo._client.query.return_value = {
-            "Items": [
-                {
-                    "PK": {"S": "FILE#file-123"},
-                    "SK": {"S": f"TS#{timestamp}"},
-                    "fileId": {"S": "file-123"},
-                    "timestamp": {"S": timestamp},
-                    "correlationId": {"S": "corr-456"},
-                    "originalFilename": {"S": "test.pdf"},
-                    "fileSizeBytes": {"N": "1024"},
-                    "mimeType": {"S": "application/pdf"},
-                    "bucketName": {"S": "test-bucket"},
-                    "objectKey": {"S": "test-key"},
-                    "status": {"S": "PENDING"},
-                },
-                {
-                    "PK": {"S": "FILE#file-123"},
-                    "SK": {"S": f"TS#{timestamp}"},
-                    "fileId": {"S": "file-123"},
-                    "timestamp": {"S": timestamp},
-                    "correlationId": {"S": "corr-456"},
-                    "originalFilename": {"S": "test.pdf"},
-                    "fileSizeBytes": {"N": "1024"},
-                    "mimeType": {"S": "application/pdf"},
-                    "bucketName": {"S": "test-bucket"},
-                    "objectKey": {"S": "test-key"},
-                    "status": {"S": "COMPLETED"},
-                },
-            ]
-        }
-
-        records = repo.get_history("file-123", limit=10)
-
-        assert len(records) == 2
-
-    def test_get_history_empty(self, repo: DynamoDBMetadataRepository) -> None:
-        repo._client.query.return_value = {"Items": []}
-
-        records = repo.get_history("file-123")
-
-        assert records == []
-
-    def test_get_history_error(self, repo: DynamoDBMetadataRepository) -> None:
-        repo._client.query.side_effect = ClientError(
-            {"Error": {"Code": "InternalServerError"}},
-            "Query",
-        )
-
-        with pytest.raises(StorageError):
-            repo.get_history("file-123")
+@pytest.fixture
+def repo(client: MagicMock) -> DynamoDBMetadataRepository:
+    return DynamoDBMetadataRepository(client, "metadata-table")
 
 
-class TestDynamoDBMetadataRepositoryUpdateStatus:
-    @pytest.fixture
-    def repo(self) -> DynamoDBMetadataRepository:
-        client = MagicMock()
-        return DynamoDBMetadataRepository(
-            dynamodb_client=client,
-            table_name="test-table",
-        )
+def test_save_updates_shared_current_state(
+    repo: DynamoDBMetadataRepository,
+    client: MagicMock,
+    record: MetadataRecord,
+) -> None:
+    repo.save(record)
 
-    def test_update_status_success(self, repo: DynamoDBMetadataRepository) -> None:
-        repo.update_status("file-123", "2024-01-01T00:00:00", "COMPLETED")
-
-        repo._client.update_item.assert_called_once()
-
-    def test_update_status_with_error_message(self, repo: DynamoDBMetadataRepository) -> None:
-        repo.update_status(
-            "file-123",
-            "2024-01-01T00:00:00",
-            "FAILED",
-            error_message="Processing failed",
-        )
-
-        call_kwargs = repo._client.update_item.call_args.kwargs
-        assert ":error" in call_kwargs["ExpressionAttributeValues"]
-
-    def test_update_status_completed_sets_processed_at(
-        self, repo: DynamoDBMetadataRepository
-    ) -> None:
-        repo.update_status("file-123", "2024-01-01T00:00:00", "COMPLETED")
-
-        call_kwargs = repo._client.update_item.call_args.kwargs
-        assert ":processed" in call_kwargs["ExpressionAttributeValues"]
-
-    def test_update_status_error(self, repo: DynamoDBMetadataRepository) -> None:
-        repo._client.update_item.side_effect = ClientError(
-            {"Error": {"Code": "InternalServerError"}},
-            "UpdateItem",
-        )
-
-        with pytest.raises(StorageError):
-            repo.update_status("file-123", "timestamp", "COMPLETED")
+    request = client.update_item.call_args.kwargs
+    assert request["Key"] == {
+        "PK": {"S": "FILE#file-123"},
+        "SK": {"S": "METADATA"},
+    }
+    assert "if_not_exists(#createdAt" in request["UpdateExpression"]
+    assert "originalFilename" in request["ExpressionAttributeNames"].values()
+    assert record.updated_at is not None
 
 
-class TestDynamoDBMetadataRepositoryQueryByStatus:
-    @pytest.fixture
-    def repo(self) -> DynamoDBMetadataRepository:
-        client = MagicMock()
-        return DynamoDBMetadataRepository(
-            dynamodb_client=client,
-            table_name="test-table",
-        )
-
-    def test_query_by_status_success(self, repo: DynamoDBMetadataRepository) -> None:
-        timestamp = datetime.utcnow().isoformat()
-        repo._client.query.return_value = {
-            "Items": [
-                {
-                    "PK": {"S": "FILE#file-123"},
-                    "SK": {"S": f"TS#{timestamp}"},
-                    "fileId": {"S": "file-123"},
-                    "timestamp": {"S": timestamp},
-                    "correlationId": {"S": "corr-456"},
-                    "originalFilename": {"S": "test.pdf"},
-                    "fileSizeBytes": {"N": "1024"},
-                    "mimeType": {"S": "application/pdf"},
-                    "bucketName": {"S": "test-bucket"},
-                    "objectKey": {"S": "test-key"},
-                    "status": {"S": "PENDING"},
-                }
-            ]
-        }
-
-        records = repo.query_by_status("PENDING", limit=50)
-
-        assert len(records) == 1
-        repo._client.query.assert_called_once()
-
-    def test_query_by_status_empty(self, repo: DynamoDBMetadataRepository) -> None:
-        repo._client.query.return_value = {"Items": []}
-
-        records = repo.query_by_status("FAILED")
-
-        assert records == []
-
-    def test_query_by_status_error(self, repo: DynamoDBMetadataRepository) -> None:
-        repo._client.query.side_effect = ClientError(
-            {"Error": {"Code": "InternalServerError"}},
-            "Query",
-        )
-
-        with pytest.raises(StorageError):
-            repo.query_by_status("PENDING")
+def test_save_preserves_gateway_created_by(
+    repo: DynamoDBMetadataRepository,
+    client: MagicMock,
+    record: MetadataRecord,
+) -> None:
+    record.created_by = "subject-123"
+    repo.save(record)
+    request = client.update_item.call_args.kwargs
+    assert "#createdBy = if_not_exists(#createdBy, :createdBy)" in request["UpdateExpression"]
 
 
-class TestDynamoDBMetadataRepositoryIncrementRetryCount:
-    @pytest.fixture
-    def repo(self) -> DynamoDBMetadataRepository:
-        client = MagicMock()
-        return DynamoDBMetadataRepository(
-            dynamodb_client=client,
-            table_name="test-table",
-        )
+def test_save_wraps_non_retryable_client_error(
+    repo: DynamoDBMetadataRepository,
+    client: MagicMock,
+    record: MetadataRecord,
+) -> None:
+    client.update_item.side_effect = ClientError(
+        {"Error": {"Code": "ValidationException", "Message": "bad"}},
+        "UpdateItem",
+    )
+    with pytest.raises(StorageError):
+        repo.save(record)
+    assert client.update_item.call_count == 1
 
-    def test_increment_retry_count_success(self, repo: DynamoDBMetadataRepository) -> None:
-        repo._client.update_item.return_value = {"Attributes": {"retryCount": {"N": "3"}}}
 
-        count = repo.increment_retry_count("file-123", "2024-01-01T00:00:00")
+def test_get_by_id_reads_fixed_key_consistently(
+    repo: DynamoDBMetadataRepository,
+    client: MagicMock,
+    record: MetadataRecord,
+) -> None:
+    client.get_item.return_value = {"Item": record.to_dynamodb_item()}
+    restored = repo.get_by_id(record.file_id)
+    assert restored is not None
+    assert restored.original_filename == record.original_filename
+    assert client.get_item.call_args.kwargs["ConsistentRead"] is True
+    assert client.get_item.call_args.kwargs["Key"]["SK"] == {"S": "METADATA"}
 
-        assert count == 3
 
-    def test_increment_retry_count_error(self, repo: DynamoDBMetadataRepository) -> None:
-        repo._client.update_item.side_effect = ClientError(
-            {"Error": {"Code": "InternalServerError"}},
-            "UpdateItem",
-        )
+def test_get_by_id_missing(repo: DynamoDBMetadataRepository, client: MagicMock) -> None:
+    client.get_item.return_value = {}
+    assert repo.get_by_id("missing") is None
 
-        with pytest.raises(StorageError):
-            repo.increment_retry_count("file-123", "timestamp")
+
+def test_get_history_is_current_state_only(
+    repo: DynamoDBMetadataRepository,
+    client: MagicMock,
+    record: MetadataRecord,
+) -> None:
+    client.get_item.return_value = {"Item": record.to_dynamodb_item()}
+    history = repo.get_history(record.file_id, limit=10)
+    assert len(history) == 1
+    assert history[0].file_id == record.file_id
+    assert repo.get_history(record.file_id, limit=0) == []
+
+
+def test_update_status_uses_metadata_sort_key(
+    repo: DynamoDBMetadataRepository,
+    client: MagicMock,
+) -> None:
+    repo.update_status("file-123", "ignored", "COMPLETED")
+    request = client.update_item.call_args.kwargs
+    assert request["Key"]["SK"] == {"S": "METADATA"}
+    assert "processedAt" in request["UpdateExpression"]
+
+
+def test_query_by_status_returns_metadata_entities(
+    repo: DynamoDBMetadataRepository,
+    client: MagicMock,
+    record: MetadataRecord,
+) -> None:
+    item = record.to_dynamodb_item()
+    client.query.return_value = {"Items": [item, {"entityType": {"S": "OUTBOX"}}]}
+    records = repo.query_by_status("PROCESSING")
+    assert len(records) == 1
+    assert records[0].file_id == record.file_id
+
+
+def test_increment_retry_count_uses_current_state_key(
+    repo: DynamoDBMetadataRepository,
+    client: MagicMock,
+) -> None:
+    client.update_item.return_value = {"Attributes": {"retryCount": {"N": "3"}}}
+    assert repo.increment_retry_count("file-123", "ignored") == 3
+    assert client.update_item.call_args.kwargs["Key"]["SK"] == {"S": "METADATA"}

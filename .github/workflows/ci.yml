@@ -44,7 +44,7 @@ jobs:
           echo "auto_deploy_dev=${auto_deploy_dev}" >> "$GITHUB_OUTPUT"
 
   call-python:
-    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@v0.0.79
+    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@3be5121f484722007182b432327f9a6a27d32458
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       GABRBA_SECRET: ${{ secrets.GABRBA_SECRET }}
@@ -61,8 +61,29 @@ jobs:
       needs.call-python.result == 'success' &&
       needs.params.outputs.auto_deploy_dev == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+
+      - name: Resolve verified processor image
+        id: image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d ' \r\n' < release.version)"
+          repository="ghcr.io/${OWNER}/fsamp-processor"
+          echo "${GH_TOKEN}" | crane auth login ghcr.io \
+            --username "${GITHUB_ACTOR}" --password-stdin
+          digest="$(crane digest "${repository}:${version}")"
+          [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "source=${repository}@${digest}" >> "${GITHUB_OUTPUT}"
 
       - name: Generate GitHub App Token
         id: app-token
@@ -79,24 +100,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          version="0.0.0"
-          [[ -s release.version ]] && version="$(tr -d ' \r\n' < release.version)"
           image_tag="dev-fsamp-processor-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA::7}"
 
           jq -n \
-            --arg gateway_ref "main" \
-            --arg processor_ref "${GITHUB_SHA}" \
+            --arg processor_source_image "${{ steps.image.outputs.source }}" \
+            --arg code_ci_workflow_sha "3be5121f484722007182b432327f9a6a27d32458" \
             --arg image_tag "${image_tag}" \
-            --arg service "fsamp-processor" \
-            --arg version "${version}" \
             '{
               event_type: "deploy-dev",
               client_payload: {
-                gateway_ref: $gateway_ref,
-                processor_ref: $processor_ref,
+                processor_source_image: $processor_source_image,
+                code_ci_workflow_sha: $code_ci_workflow_sha,
                 image_tag: $image_tag,
-                service: $service,
-                version: $version
+                service: "fsamp-processor"
               }
             }' \
             | gh api "repos/${OWNER}/fsamp-infra/dispatches" --method POST --input -

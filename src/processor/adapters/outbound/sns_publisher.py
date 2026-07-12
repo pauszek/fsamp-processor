@@ -8,13 +8,8 @@ from typing import TYPE_CHECKING
 import orjson
 import structlog
 from botocore.exceptions import ClientError
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
+from processor.adapters.outbound.aws_retry import aws_retry
 from processor.domain.events import FileEvent
 from processor.domain.exceptions import MessageError
 from processor.ports.outbound import EventPublisher
@@ -52,11 +47,7 @@ class SNSEventPublisher(EventPublisher):
         self._topic_arn = topic_arn
         logger.info("SNS Publisher initialized", topic_arn=topic_arn)
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
+    @aws_retry()
     def publish(self, event: FileEvent) -> str:
         """Publish a single event to SNS."""
         log = logger.bind(
@@ -101,11 +92,6 @@ class SNSEventPublisher(EventPublisher):
                 cause=e,
             ) from e
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
     def publish_batch(self, events: list[FileEvent]) -> list[str]:
         """
         Publish multiple events in a batch.
@@ -117,14 +103,9 @@ class SNSEventPublisher(EventPublisher):
         message_ids: list[str] = []
 
         for event in events:
-            try:
-                message_id = self.publish(event)
-                message_ids.append(message_id)
-            except MessageError:
-                logger.error(
-                    "Failed to publish event in batch",
-                    event_id=str(event.event_id),
-                )
+            # Propagate the first failure. Returning a partial success list would
+            # acknowledge and silently lose the unpublished suffix of the batch.
+            message_ids.append(self.publish(event))
 
         logger.info(
             "Batch publish completed",

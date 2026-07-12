@@ -1,20 +1,14 @@
-"""
-DynamoDB implementation of the MetadataRepository port.
-Stores file metadata with single-table design.
-"""
+"""DynamoDB current-state implementation of the metadata repository."""
+
+from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
 from botocore.exceptions import ClientError
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
+from processor.adapters.outbound.aws_retry import aws_retry
 from processor.domain.exceptions import StorageError
 from processor.domain.models import MetadataRecord, ProcessingStatus
 from processor.ports.outbound import MetadataRepository
@@ -25,150 +19,112 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+def build_metadata_update(
+    record: MetadataRecord,
+) -> tuple[str, dict[str, str], dict[str, dict[str, Any]]]:
+    """Build an update that preserves gateway-owned audit and optional fields."""
+    now = datetime.now(UTC).isoformat()
+    record.updated_at = now
+    created_at = record.created_at or now
+
+    item = record.to_dynamodb_item()
+    item["GSI1PK"] = {"S": f"STATUS#{record.status.value}"}
+    item["GSI1SK"] = {"S": now}
+    item["updatedAt"] = {"S": now}
+
+    names: dict[str, str] = {}
+    values: dict[str, dict[str, Any]] = {}
+    assignments: list[str] = []
+    index = 0
+    for attribute, value in item.items():
+        if attribute in {"PK", "SK", "createdAt", "createdBy"}:
+            continue
+        name = f"#n{index}"
+        placeholder = f":v{index}"
+        names[name] = attribute
+        values[placeholder] = value
+        assignments.append(f"{name} = {placeholder}")
+        index += 1
+
+    names["#createdAt"] = "createdAt"
+    values[":createdAt"] = {"S": created_at}
+    assignments.append("#createdAt = if_not_exists(#createdAt, :createdAt)")
+    if record.created_by:
+        names["#createdBy"] = "createdBy"
+        values[":createdBy"] = {"S": record.created_by}
+        assignments.append("#createdBy = if_not_exists(#createdBy, :createdBy)")
+
+    return "SET " + ", ".join(assignments), names, values
+
+
 class DynamoDBMetadataRepository(MetadataRepository):
-    """
-    DynamoDB Metadata Repository adapter.
+    """Store one shared current-state row at ``FILE#id`` / ``METADATA``."""
 
-    Uses single-table design with:
-    - PK: FILE#<file_id>
-    - SK: TS#<timestamp>
-    - GSI1PK: STATUS#<status> (for querying by status)
-    - GSI1SK: <timestamp>
-    """
-
-    def __init__(
-        self,
-        dynamodb_client: DynamoDBClient,
-        table_name: str,
-    ) -> None:
-        """
-        Initialize DynamoDB Repository.
-
-        Args:
-            dynamodb_client: Boto3 DynamoDB client.
-            table_name: Name of the DynamoDB table.
-        """
+    def __init__(self, dynamodb_client: DynamoDBClient, table_name: str) -> None:
         self._client = dynamodb_client
         self._table_name = table_name
-        logger.info("DynamoDB Repository initialized", table=table_name)
+        logger.info("DynamoDB metadata repository initialized", table=table_name)
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
+    @aws_retry()
     def save(self, record: MetadataRecord) -> None:
-        """Save a metadata record to DynamoDB."""
-        log = logger.bind(file_id=record.file_id, status=record.status)
-
+        """Update the shared metadata item without replacing gateway-owned fields."""
+        expression, names, values = build_metadata_update(record)
         try:
-            now = datetime.now(UTC).isoformat()
-            record.updated_at = now
-            if not record.created_at:
-                record.created_at = now
-
-            item = record.to_dynamodb_item()
-
-            item["GSI1PK"] = {"S": f"STATUS#{record.status.value}"}
-            item["GSI1SK"] = {"S": record.timestamp}
-
-            self._client.put_item(
+            self._client.update_item(
                 TableName=self._table_name,
-                Item=item,
-            )
-
-            log.info("Metadata record saved")
-
-        except ClientError as e:
-            log.exception("Failed to save metadata record")
-            raise StorageError(
-                message=f"Failed to save metadata record: {e}",
-                storage_type="dynamodb",
-                operation="save",
-                resource=f"{self._table_name}/{record.file_id}",
-                cause=e,
-            ) from e
-
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
-    def get_by_id(self, file_id: str) -> MetadataRecord | None:
-        """Get the latest metadata record by file ID."""
-        log = logger.bind(file_id=file_id)
-
-        try:
-            response = self._client.query(
-                TableName=self._table_name,
-                KeyConditionExpression="PK = :pk",
-                ExpressionAttributeValues={
-                    ":pk": {"S": f"FILE#{file_id}"},
+                Key={
+                    "PK": {"S": f"FILE#{record.file_id}"},
+                    "SK": {"S": "METADATA"},
                 },
-                ScanIndexForward=False,  # Descending order (newest first)
-                Limit=1,
+                UpdateExpression=expression,
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
             )
-
-            items = response.get("Items", [])
-            if not items:
-                log.debug("Metadata record not found")
-                return None
-
-            record = MetadataRecord.from_dynamodb_item(items[0])
-            log.debug("Metadata record retrieved", status=record.status)
-            return record
-
-        except ClientError as e:
-            log.exception("Failed to get metadata record")
+            logger.info(
+                "Metadata current state saved",
+                file_id=record.file_id,
+                status=record.status.value,
+            )
+        except ClientError as error:
             raise StorageError(
-                message=f"Failed to get metadata record: {e}",
+                message=f"Failed to save metadata record: {error}",
+                storage_type="dynamodb",
+                operation="update",
+                resource=f"{self._table_name}/{record.file_id}",
+                cause=error,
+            ) from error
+
+    @aws_retry()
+    def get_by_id(self, file_id: str) -> MetadataRecord | None:
+        """Read the shared current-state metadata item consistently."""
+        try:
+            response = self._client.get_item(
+                TableName=self._table_name,
+                Key={
+                    "PK": {"S": f"FILE#{file_id}"},
+                    "SK": {"S": "METADATA"},
+                },
+                ConsistentRead=True,
+            )
+            item = response.get("Item")
+            return MetadataRecord.from_dynamodb_item(item) if item else None
+        except ClientError as error:
+            raise StorageError(
+                message=f"Failed to get metadata record: {error}",
                 storage_type="dynamodb",
                 operation="get",
                 resource=f"{self._table_name}/{file_id}",
-                cause=e,
-            ) from e
+                cause=error,
+            ) from error
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
     def get_history(self, file_id: str, limit: int = 10) -> list[MetadataRecord]:
-        """Get metadata record history for a file."""
-        log = logger.bind(file_id=file_id)
+        """Return the current record; timestamp history is intentionally not stored."""
+        if limit <= 0:
+            return []
+        record = self.get_by_id(file_id)
+        return [record] if record is not None else []
 
-        try:
-            response = self._client.query(
-                TableName=self._table_name,
-                KeyConditionExpression="PK = :pk",
-                ExpressionAttributeValues={
-                    ":pk": {"S": f"FILE#{file_id}"},
-                },
-                ScanIndexForward=False,  # Descending order (newest first)
-                Limit=limit,
-            )
-
-            items = response.get("Items", [])
-            records = [MetadataRecord.from_dynamodb_item(item) for item in items]
-
-            log.debug("Retrieved metadata history", count=len(records))
-            return records
-
-        except ClientError as e:
-            log.exception("Failed to get metadata history")
-            raise StorageError(
-                message=f"Failed to get metadata history: {e}",
-                storage_type="dynamodb",
-                operation="query",
-                resource=f"{self._table_name}/{file_id}",
-                cause=e,
-            ) from e
-
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
+    @aws_retry()
     def update_status(
         self,
         file_id: str,
@@ -176,121 +132,89 @@ class DynamoDBMetadataRepository(MetadataRepository):
         status: str,
         error_message: str | None = None,
     ) -> None:
-        """Update the status of a metadata record."""
-        log = logger.bind(file_id=file_id, status=status)
-
+        """Update current status; ``timestamp`` remains for port compatibility."""
+        del timestamp
+        now = datetime.now(UTC).isoformat()
+        expression = "SET #status = :status, updatedAt = :updated, GSI1PK = :gsi"
+        values: dict[str, dict[str, Any]] = {
+            ":status": {"S": status},
+            ":updated": {"S": now},
+            ":gsi": {"S": f"STATUS#{status}"},
+        }
+        if error_message:
+            expression += ", errorMessage = :error"
+            values[":error"] = {"S": error_message}
+        if status == ProcessingStatus.COMPLETED.value:
+            expression += ", processedAt = :processed"
+            values[":processed"] = {"S": now}
         try:
-            update_expr = "SET #status = :status, updatedAt = :updated"
-            expr_names: dict[str, str] = {"#status": "status"}
-            expr_values: dict[str, Any] = {
-                ":status": {"S": status},
-                ":updated": {"S": datetime.now(UTC).isoformat()},
-            }
-
-            update_expr += ", GSI1PK = :gsi1pk"
-            expr_values[":gsi1pk"] = {"S": f"STATUS#{status}"}
-
-            if error_message:
-                update_expr += ", errorMessage = :error"
-                expr_values[":error"] = {"S": error_message}
-
-            if status == ProcessingStatus.COMPLETED.value:
-                update_expr += ", processedAt = :processed"
-                expr_values[":processed"] = {"S": datetime.now(UTC).isoformat()}
-
             self._client.update_item(
                 TableName=self._table_name,
-                Key={
-                    "PK": {"S": f"FILE#{file_id}"},
-                    "SK": {"S": f"TS#{timestamp}"},
-                },
-                UpdateExpression=update_expr,
-                ExpressionAttributeNames=expr_names,
-                ExpressionAttributeValues=expr_values,
+                Key={"PK": {"S": f"FILE#{file_id}"}, "SK": {"S": "METADATA"}},
+                UpdateExpression=expression,
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues=values,
             )
-
-            log.info("Metadata status updated")
-
-        except ClientError as e:
-            log.exception("Failed to update metadata status")
+        except ClientError as error:
             raise StorageError(
-                message=f"Failed to update status: {e}",
+                message=f"Failed to update metadata status: {error}",
                 storage_type="dynamodb",
                 operation="update",
                 resource=f"{self._table_name}/{file_id}",
-                cause=e,
-            ) from e
+                cause=error,
+            ) from error
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
-    def query_by_status(
-        self,
-        status: str,
-        limit: int = 100,
-    ) -> list[MetadataRecord]:
-        """Query metadata records by status using GSI."""
-        log = logger.bind(status=status)
-
+    @aws_retry()
+    def query_by_status(self, status: str, limit: int = 100) -> list[MetadataRecord]:
+        """Query current-state rows by status."""
         try:
             response = self._client.query(
                 TableName=self._table_name,
                 IndexName="GSI1",
                 KeyConditionExpression="GSI1PK = :status",
-                ExpressionAttributeValues={
-                    ":status": {"S": f"STATUS#{status}"},
-                },
+                ExpressionAttributeValues={":status": {"S": f"STATUS#{status}"}},
                 ScanIndexForward=False,
                 Limit=limit,
             )
-
-            items = response.get("Items", [])
-            records = [MetadataRecord.from_dynamodb_item(item) for item in items]
-
-            log.debug("Retrieved records by status", count=len(records))
-            return records
-
-        except ClientError as e:
-            log.exception("Failed to query by status")
+            return [
+                MetadataRecord.from_dynamodb_item(item)
+                for item in response.get("Items", [])
+                if item.get("entityType", {}).get("S") == "FILE_METADATA"
+            ]
+        except ClientError as error:
             raise StorageError(
-                message=f"Failed to query by status: {e}",
+                message=f"Failed to query metadata status: {error}",
                 storage_type="dynamodb",
                 operation="query",
                 resource=self._table_name,
-                cause=e,
-            ) from e
+                cause=error,
+            ) from error
 
+    @aws_retry()
     def increment_retry_count(self, file_id: str, timestamp: str) -> int:
-        """Increment retry count and return new value."""
-        log = logger.bind(file_id=file_id)
-
+        """Atomically increment retry count on the current-state item."""
+        del timestamp
         try:
             response = self._client.update_item(
                 TableName=self._table_name,
-                Key={
-                    "PK": {"S": f"FILE#{file_id}"},
-                    "SK": {"S": f"TS#{timestamp}"},
-                },
-                UpdateExpression="SET retryCount = retryCount + :inc, updatedAt = :updated",
+                Key={"PK": {"S": f"FILE#{file_id}"}, "SK": {"S": "METADATA"}},
+                UpdateExpression=(
+                    "SET retryCount = if_not_exists(retryCount, :zero) + :inc, "
+                    "updatedAt = :updated"
+                ),
                 ExpressionAttributeValues={
+                    ":zero": {"N": "0"},
                     ":inc": {"N": "1"},
                     ":updated": {"S": datetime.now(UTC).isoformat()},
                 },
                 ReturnValues="UPDATED_NEW",
             )
-
-            new_count = int(response["Attributes"]["retryCount"]["N"])
-            log.debug("Retry count incremented", retry_count=new_count)
-            return new_count
-
-        except ClientError as e:
-            log.exception("Failed to increment retry count")
+            return int(response["Attributes"]["retryCount"]["N"])
+        except ClientError as error:
             raise StorageError(
-                message=f"Failed to increment retry count: {e}",
+                message=f"Failed to increment retry count: {error}",
                 storage_type="dynamodb",
                 operation="update",
                 resource=f"{self._table_name}/{file_id}",
-                cause=e,
-            ) from e
+                cause=error,
+            ) from error

@@ -2,8 +2,10 @@
 
 from processor.domain.events import (
     EventType,
+    FailureDetails,
     FileEvent,
     FileMetadata,
+    ProcessingResultDetails,
     SecurityContext,
     StorageLocation,
 )
@@ -21,10 +23,12 @@ __all__ = [
     "DomainError",
     "EventType",
     "EventValidationError",
+    "FailureDetails",
     "FileEvent",
     "FileMetadata",
     "ProcessingError",
     "ProcessingResult",
+    "ProcessingResultDetails",
     "ProcessingStatus",
     "SecurityContext",
     "StorageError",

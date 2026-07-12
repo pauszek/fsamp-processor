@@ -21,7 +21,12 @@ class FileStorage(ABC):
     """
 
     @abstractmethod
-    def download(self, bucket_name: str, object_key: str) -> FileContent:
+    def download(
+        self,
+        bucket_name: str,
+        object_key: str,
+        max_bytes: int | None = None,
+    ) -> FileContent:
         """
         Download a file from storage.
 
@@ -35,6 +40,17 @@ class FileStorage(ABC):
         Raises:
             StorageError: If download fails.
         """
+        ...
+
+    @abstractmethod
+    def copy(
+        self,
+        source_bucket: str,
+        source_key: str,
+        dest_bucket: str,
+        dest_key: str,
+    ) -> str:
+        """Copy an object using the storage adapter's required encryption policy."""
         ...
 
     @abstractmethod
@@ -154,14 +170,18 @@ class MetadataRepository(ABC):
     @abstractmethod
     def get_history(self, file_id: str, limit: int = 10) -> list[MetadataRecord]:
         """
-        Get metadata record history for a file.
+        Get the current metadata snapshot for a file.
+
+        The canonical metadata layout stores one ``FILE#id/METADATA`` item, so
+        implementations return either an empty list or a single current record.
+        The method name is retained for backward compatibility.
 
         Args:
             file_id: The file ID (partition key).
-            limit: Maximum number of records to return.
+            limit: Set to zero or less to suppress the result.
 
         Returns:
-            List of metadata records, newest first.
+            A list containing at most the current metadata record.
 
         Raises:
             StorageError: If retrieval fails.
@@ -456,6 +476,7 @@ class OutboxRepository(ABC):
         self,
         event_id: str,
         aggregate_type: str = "FileProcessing",
+        aggregate_id: str | None = None,
     ) -> None:
         """
         Mark an outbox event as published.
@@ -477,6 +498,7 @@ class OutboxRepository(ABC):
         event_id: str,
         error: str,
         aggregate_type: str = "FileProcessing",
+        aggregate_id: str | None = None,
     ) -> None:
         """
         Mark an outbox event as failed.

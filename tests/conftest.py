@@ -188,7 +188,7 @@ def sample_file_event(
         event_id=sample_event_id,
         correlation_id=sample_correlation_id,
         timestamp=datetime.now(UTC),
-        source=EventSource.PROCESSOR,
+        source=EventSource.GATEWAY,
         event_type=EventType.FILE_UPLOADED,
         file_metadata=sample_file_metadata,
         storage_location=sample_storage_location,

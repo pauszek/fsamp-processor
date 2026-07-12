@@ -136,7 +136,35 @@ class Settings(BaseSettings):
     )
     max_file_size_bytes: int = Field(
         default=100 * 1024 * 1024,  # 100 MB
+        ge=1,
+        le=100 * 1024 * 1024,
         description="Maximum allowed file size",
+    )
+    outbox_max_retry_count: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        alias="MAX_RETRY_COUNT",
+        description="Maximum number of outbox publication attempts",
+    )
+    publish_claim_ttl_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+        description="Outbox publisher lease duration",
+    )
+    outbox_retention_seconds: int = Field(
+        default=30 * 24 * 60 * 60,
+        ge=24 * 60 * 60,
+        le=365 * 24 * 60 * 60,
+        description="Published outbox row retention period",
+    )
+    quarantine_prefix: str = Field(
+        default="quarantine",
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9!_.*'()/-]+$",
+        description="Same-bucket prefix for denied files",
     )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         default="INFO",
@@ -162,6 +190,50 @@ class Settings(BaseSettings):
         if self.aws_lambda_function_name:
             self.is_lambda = True
         return self
+
+    @model_validator(mode="after")
+    def validate_deployment_baseline(self) -> Self:
+        if self.environment != "local":
+            if self.aws_endpoint_url:
+                raise ValueError("Custom AWS endpoints are allowed only in local mode")
+            if self.aws_region != SUPPORTED_FIPS_ENDPOINT_REGION:
+                raise ValueError(
+                    f"Non-local deployments require region {SUPPORTED_FIPS_ENDPOINT_REGION}"
+                )
+            if not self.use_fips_endpoint:
+                raise ValueError("Non-local deployments must enable AWS FIPS endpoints")
+            if self.fips_required is False:
+                raise ValueError("Non-local deployments cannot disable FIPS enforcement")
+        return self
+
+    def validate_processor_runtime(self) -> None:
+        """Fail before wiring a processor with incomplete resource configuration."""
+        required = {
+            "S3_BUCKET_NAME": self.s3_bucket_name,
+            "DYNAMODB_TABLE_NAME": self.dynamodb_table_name,
+            "KMS_KEY_ID": self.kms_key_id,
+        }
+        if not self.is_lambda:
+            required["SQS_QUEUE_URL"] = self.sqs_queue_url
+        if self.environment != "local":
+            required["OUTBOX_TABLE_NAME"] = self.outbox_table_name
+        elif not self.outbox_table_name:
+            required["SNS_TOPIC_ARN"] = self.sns_topic_arn
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise ValueError(f"Missing required processor configuration: {', '.join(missing)}")
+
+    def validate_outbox_runtime(self) -> None:
+        """Fail before wiring a publisher without its table or result topic."""
+        missing: list[str] = []
+        if not self.outbox_table_name:
+            missing.append("OUTBOX_TABLE_NAME")
+        if not (
+            self.sns_topic_arn or self.file_events_topic_arn or self.processing_events_topic_arn
+        ):
+            missing.append("SNS topic ARN")
+        if missing:
+            raise ValueError(f"Missing required outbox configuration: {', '.join(missing)}")
 
     @property
     def is_local(self) -> bool:

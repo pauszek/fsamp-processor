@@ -11,8 +11,10 @@ from processor.domain.events import (
     SCHEMA_VERSION,
     EventSource,
     EventType,
+    FailureDetails,
     FileEvent,
     FileMetadata,
+    ProcessingResultDetails,
     SecurityContext,
     StorageLocation,
 )
@@ -24,37 +26,55 @@ SCHEMA_PATHS = [
 ]
 
 
-def _find_schema_path() -> Path | None:
+def _find_schema_path() -> Path:
     for path in SCHEMA_PATHS:
         if path.exists():
             return path
-    return None
+    raise FileNotFoundError(
+        "Canonical event schema is missing; keep schema/event.schema.json in the repository"
+    )
 
 
 @pytest.fixture
 def event_schema() -> dict:
     schema_path = _find_schema_path()
-    if schema_path is None:
-        pytest.skip(
-            "Event schema not found. Run './scripts/download-schema.sh' or ensure "
-            "fsamp-event-schema repo is available as sibling directory."
-        )
-
     with open(schema_path) as f:
         return json.load(f)
 
 
 def _create_valid_event(
     event_type: EventType = EventType.FILE_UPLOADED,
-    source: EventSource = EventSource.PROCESSOR,
+    source: EventSource | None = None,
 ) -> FileEvent:
+    resolved_source = source or (
+        EventSource.GATEWAY if event_type == EventType.FILE_UPLOADED else EventSource.PROCESSOR
+    )
+    processing_result = (
+        ProcessingResultDetails(
+            is_safe=True,
+            findings=[],
+            processed_at=datetime.now(UTC),
+        )
+        if event_type == EventType.ANALYSIS_COMPLETED
+        else None
+    )
+    failure = (
+        FailureDetails(
+            code="TEST_FAILURE",
+            message="test failure",
+            failed_at=datetime.now(UTC),
+            retryable=False,
+        )
+        if event_type == EventType.PROCESSING_FAILED
+        else None
+    )
     return FileEvent(
         schema_version=SCHEMA_VERSION,
         file_id=uuid4(),
         event_id=uuid4(),
         correlation_id=uuid4(),
         timestamp=datetime.now(UTC),
-        source=source,
+        source=resolved_source,
         event_type=event_type,
         file_metadata=FileMetadata(
             original_filename="document.pdf",
@@ -71,6 +91,8 @@ def _create_valid_event(
             encryption_algorithm="AES/GCM/NoPadding",
             kms_key_id="arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012",
         ),
+        processing_result=processing_result,
+        failure=failure,
     )
 
 
@@ -184,7 +206,7 @@ class TestBackwardsCompatibility:
                 event_id=uuid4(),
                 correlation_id="not-a-uuid",  # Invalid - must be UUID
                 timestamp=datetime.now(UTC),
-                source=EventSource.PROCESSOR,
+                source=EventSource.GATEWAY,
                 event_type=EventType.FILE_UPLOADED,
                 file_metadata=FileMetadata(
                     original_filename="test.pdf",

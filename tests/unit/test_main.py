@@ -126,6 +126,7 @@ class TestCreateApplication:
             dynamodb_client=dynamodb_client,
             metadata_table_name="test-table",
             outbox_table_name="test-outbox",
+            retention_seconds=settings.outbox_retention_seconds,
         )
         mock_processor.assert_called_once()
         assert mock_processor.call_args.kwargs["outbox_repo"] == mock_outbox_repo.return_value

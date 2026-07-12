@@ -12,13 +12,8 @@ import structlog
 from botocore.exceptions import ClientError
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
+from processor.adapters.outbound.aws_retry import aws_retry, is_retryable_aws_error
 from processor.domain.exceptions import CryptoError
 from processor.ports.outbound import CryptoProvider
 
@@ -76,11 +71,7 @@ class KMSCryptoProvider(CryptoProvider):
             return f"{key_id[:10]}...{key_id[-6:]}"
         return key_id
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
+    @aws_retry()
     def generate_data_key(
         self,
         context: dict[str, str] | None = None,
@@ -121,11 +112,7 @@ class KMSCryptoProvider(CryptoProvider):
                 cause=e,
             ) from e
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
+    @aws_retry()
     def _decrypt_data_key(
         self,
         encrypted_key: bytes,
@@ -308,11 +295,7 @@ class KMSCryptoProvider(CryptoProvider):
 
         return digest
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
+    @aws_retry()
     def verify_key_access(self) -> bool:
         """Verify that we have access to the KMS key."""
         try:
@@ -325,6 +308,12 @@ class KMSCryptoProvider(CryptoProvider):
                 "KMS key access verification failed",
                 error_code=error_code,
             )
+            if is_retryable_aws_error(e):
+                raise CryptoError(
+                    message=f"Transient KMS access verification failure: {e}",
+                    operation="describe_key",
+                    cause=e,
+                ) from e
             return False
 
     def get_key_metadata(self) -> dict[str, Any]:

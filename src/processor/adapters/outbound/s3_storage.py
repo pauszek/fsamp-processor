@@ -7,14 +7,9 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from botocore.exceptions import ClientError
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
-from processor.domain.exceptions import StorageError
+from processor.adapters.outbound.aws_retry import aws_retry
+from processor.domain.exceptions import NonRetryableError, StorageError
 from processor.domain.models import FileContent
 from processor.ports.outbound import FileStorage
 
@@ -51,13 +46,14 @@ class S3FileStorage(FileStorage):
         self._default_kms_key_id = default_kms_key_id
         logger.info("S3 File Storage initialized")
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
-    def download(self, bucket_name: str, object_key: str) -> FileContent:
-        """Download a file from S3."""
+    @aws_retry()
+    def download(
+        self,
+        bucket_name: str,
+        object_key: str,
+        max_bytes: int | None = None,
+    ) -> FileContent:
+        """Download a file in bounded chunks and retain actual S3 metadata."""
         log = logger.bind(bucket=bucket_name, key=object_key)
 
         try:
@@ -68,12 +64,39 @@ class S3FileStorage(FileStorage):
                 Key=object_key,
             )
 
-            data = response["Body"].read()
+            declared_length = int(response.get("ContentLength", 0))
+            body = response["Body"]
+            try:
+                if max_bytes is not None and declared_length > max_bytes:
+                    raise NonRetryableError(
+                        message=(
+                            f"S3 object is {declared_length} bytes, exceeding the "
+                            f"configured maximum of {max_bytes} bytes"
+                        ),
+                        error_code="ACTUAL_FILE_TOO_LARGE",
+                    )
+
+                chunks = bytearray()
+                while True:
+                    chunk = body.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    chunks.extend(chunk)
+                    if max_bytes is not None and len(chunks) > max_bytes:
+                        raise NonRetryableError(
+                            message=("S3 response exceeded the configured maximum while streaming"),
+                            error_code="ACTUAL_FILE_TOO_LARGE",
+                        )
+                data = bytes(chunks)
+            finally:
+                close = getattr(body, "close", None)
+                if callable(close):
+                    close()
 
             file_content = FileContent(
                 data=data,
                 content_type=response.get("ContentType"),
-                content_length=response.get("ContentLength", len(data)),
+                content_length=declared_length or len(data),
                 etag=response.get("ETag", "").strip('"'),
                 encryption_algorithm=response.get("ServerSideEncryption"),
                 kms_key_id=response.get("SSEKMSKeyId"),
@@ -120,11 +143,7 @@ class S3FileStorage(FileStorage):
                 cause=e,
             ) from e
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
+    @aws_retry()
     def upload(
         self,
         bucket_name: str,
@@ -195,11 +214,7 @@ class S3FileStorage(FileStorage):
                 cause=e,
             ) from e
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
+    @aws_retry()
     def delete(self, bucket_name: str, object_key: str) -> None:
         """Delete a file from S3."""
         log = logger.bind(bucket=bucket_name, key=object_key)
@@ -253,6 +268,7 @@ class S3FileStorage(FileStorage):
                 cause=e,
             ) from e
 
+    @aws_retry()
     def copy(
         self,
         source_bucket: str,
@@ -275,9 +291,15 @@ class S3FileStorage(FileStorage):
                 "CopySource": {"Bucket": source_bucket, "Key": source_key},
             }
 
-            if self._default_kms_key_id:
-                copy_params["ServerSideEncryption"] = "aws:kms"
-                copy_params["SSEKMSKeyId"] = self._default_kms_key_id
+            if not self._default_kms_key_id:
+                raise StorageError(
+                    message="KMS key is required for encrypted S3 copies",
+                    storage_type="s3",
+                    operation="copy",
+                    resource=f"s3://{source_bucket}/{source_key}",
+                )
+            copy_params["ServerSideEncryption"] = "aws:kms"
+            copy_params["SSEKMSKeyId"] = self._default_kms_key_id
 
             response = self._client.copy_object(**copy_params)
             etag = response.get("CopyObjectResult", {}).get("ETag", "").strip('"')

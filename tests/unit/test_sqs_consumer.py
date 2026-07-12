@@ -172,7 +172,8 @@ class TestSQSConsumerReject:
 
         consumer.reject("test-handle", requeue=False)
 
-        client.delete_message.assert_called_once()
+        client.delete_message.assert_not_called()
+        client.change_message_visibility.assert_not_called()
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_reject_no_receipt_handle(self, mock_signal) -> None:
@@ -346,12 +347,12 @@ class TestSQSConsumerProcessMessage:
         )
 
         file_event = {
-            "schema_version": "1.1.2",
+            "schema_version": "1.2.0",
             "file_id": str(uuid4()),
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),
             "timestamp": datetime.now(UTC).isoformat(),
-            "source": "fsamp-processor",
+            "source": "fsamp-gateway",
             "event_type": "FILE_UPLOADED",
             "file_metadata": {
                 "original_filename": "test.pdf",
@@ -405,7 +406,8 @@ class TestSQSConsumerProcessMessage:
         consumer._process_message(raw_message)
 
         handler.assert_not_called()
-        client.change_message_visibility.assert_called_once()
+        client.change_message_visibility.assert_not_called()
+        client.delete_message.assert_not_called()
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_process_message_non_retryable_error(self, mock_signal) -> None:
@@ -420,12 +422,12 @@ class TestSQSConsumerProcessMessage:
         )
 
         file_event = {
-            "schema_version": "1.1.2",
+            "schema_version": "1.2.0",
             "file_id": str(uuid4()),
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),
             "timestamp": datetime.now(UTC).isoformat(),
-            "source": "fsamp-processor",
+            "source": "fsamp-gateway",
             "event_type": "FILE_UPLOADED",
             "file_metadata": {
                 "original_filename": "test.pdf",
@@ -454,7 +456,8 @@ class TestSQSConsumerProcessMessage:
 
         consumer._process_message(raw_message)
 
-        client.delete_message.assert_called_once()
+        client.delete_message.assert_not_called()
+        client.change_message_visibility.assert_not_called()
 
     @patch("processor.adapters.inbound.sqs_consumer.signal.signal")
     def test_process_message_unexpected_error(self, mock_signal) -> None:
@@ -469,12 +472,12 @@ class TestSQSConsumerProcessMessage:
         )
 
         file_event = {
-            "schema_version": "1.1.2",
+            "schema_version": "1.2.0",
             "file_id": str(uuid4()),
             "event_id": str(uuid4()),
             "correlation_id": str(uuid4()),
             "timestamp": datetime.now(UTC).isoformat(),
-            "source": "fsamp-processor",
+            "source": "fsamp-gateway",
             "event_type": "FILE_UPLOADED",
             "file_metadata": {
                 "original_filename": "test.pdf",

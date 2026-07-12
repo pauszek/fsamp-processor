@@ -18,27 +18,23 @@ def test_non_string_validator_inputs_are_returned_unchanged() -> None:
 
 def test_should_use_fips_requires_supported_region_and_no_custom_endpoint() -> None:
     assert Settings(environment="prod", aws_region="us-west-2").should_use_fips is True
-    assert (
+    with pytest.raises(ValueError, match="Custom AWS endpoints"):
         Settings(
             environment="prod",
             aws_region="us-west-2",
             aws_endpoint_url="http://localhost:4566",
-        ).should_use_fips
-        is False
-    )
-    assert (
+        )
+    with pytest.raises(ValueError, match="must enable AWS FIPS"):
         Settings(
             environment="prod",
             aws_region="us-west-2",
             use_fips_endpoint=False,
-        ).should_use_fips
-        is False
-    )
+        )
 
 
 @pytest.mark.parametrize("region", ["us-east-1", "eu-west-1"])
 def test_should_use_fips_fails_closed_for_unsupported_deployment_region(region: str) -> None:
-    with pytest.raises(ValueError, match="us-west-2 FIPS endpoint baseline"):
+    with pytest.raises(ValueError, match="require region us-west-2"):
         _ = Settings(environment="prod", aws_region=region).should_use_fips
 
 
@@ -46,7 +42,7 @@ def test_should_use_fips_fails_closed_for_unsupported_deployment_region(region: 
 def test_should_use_fips_fails_closed_for_unsupported_region_when_fips_disabled(
     region: str,
 ) -> None:
-    with pytest.raises(ValueError, match="us-west-2 FIPS endpoint baseline"):
+    with pytest.raises(ValueError, match="require region us-west-2"):
         _ = Settings(
             environment="prod",
             aws_region=region,
@@ -55,8 +51,22 @@ def test_should_use_fips_fails_closed_for_unsupported_region_when_fips_disabled(
 
 
 def test_fips_required_override_takes_precedence() -> None:
-    assert Settings(environment="prod", fips_required=False).should_require_fips is False
+    with pytest.raises(ValueError, match="cannot disable FIPS"):
+        Settings(environment="prod", fips_required=False)
     assert Settings(environment="local", fips_required=True).should_require_fips is True
+
+
+def test_processor_runtime_configuration_fails_fast() -> None:
+    settings = Settings(
+        environment="local",
+        s3_bucket_name="",
+        dynamodb_table_name="",
+        kms_key_id="",
+        sqs_queue_url="",
+        sns_topic_arn="",
+    )
+    with pytest.raises(ValueError, match="S3_BUCKET_NAME"):
+        settings.validate_processor_runtime()
 
 
 def test_lambda_runtime_name_auto_detects_lambda() -> None:

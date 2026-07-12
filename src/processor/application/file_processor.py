@@ -1,17 +1,19 @@
-"""
-Main application service for processing file events.
-Orchestrates the workflow: download -> analyze -> store metadata -> publish result.
+"""Application service for bounded, idempotent file processing."""
 
-Implements Outbox Pattern for reliable event publishing - metadata and outbox
-events are written atomically in a single DynamoDB transaction.
-"""
+from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 
-from processor.domain.events import EventType, FileEvent
+from processor.domain.events import (
+    EventType,
+    FailureDetails,
+    FileEvent,
+    ProcessingResultDetails,
+    StorageLocation,
+)
 from processor.domain.exceptions import NonRetryableError, ProcessingError, StorageError
 from processor.domain.models import (
     AnalysisResult,
@@ -33,24 +35,7 @@ logger = structlog.get_logger(__name__)
 
 
 class FileProcessorService:
-    """
-    File Processor Application Service.
-
-    Implements the main use case: processing file upload events.
-
-    Workflow:
-    1. Validate incoming event
-    2. Download file from S3
-    3. Verify integrity (hash check)
-    4. Analyze file content
-    5. Store metadata in DynamoDB with Outbox event (transactional)
-    6. Outbox Publisher Lambda publishes events asynchronously
-
-    Uses Outbox Pattern for reliable event publishing:
-    - Metadata and outbox events are written atomically
-    - DynamoDB Streams triggers the Outbox Publisher
-    - At-least-once delivery guarantee
-    """
+    """Process one canonical event and persist one shared current-state record."""
 
     def __init__(
         self,
@@ -59,21 +44,12 @@ class FileProcessorService:
         event_publisher: EventPublisher,
         crypto_provider: CryptoProvider,
         outbox_repo: OutboxRepository | None = None,
-        max_file_size_bytes: int = 100 * 1024 * 1024,  # 100 MB default
+        max_file_size_bytes: int = 100 * 1024 * 1024,
         use_outbox_pattern: bool = True,
+        allowed_bucket_name: str | None = None,
+        allowed_region: str | None = None,
+        quarantine_prefix: str = "quarantine",
     ) -> None:
-        """
-        Initialize File Processor Service.
-
-        Args:
-            file_storage: Storage port for file operations.
-            metadata_repo: Repository port for metadata persistence.
-            event_publisher: Publisher port for events (direct mode).
-            crypto_provider: Crypto port for FIPS operations.
-            outbox_repo: Outbox repository for transactional writes.
-            max_file_size_bytes: Maximum allowed file size.
-            use_outbox_pattern: Whether to use Outbox Pattern (recommended).
-        """
         self._storage = file_storage
         self._metadata = metadata_repo
         self._publisher = event_publisher
@@ -81,27 +57,12 @@ class FileProcessorService:
         self._outbox = outbox_repo
         self._max_file_size = max_file_size_bytes
         self._use_outbox = use_outbox_pattern and outbox_repo is not None
-
-        logger.info(
-            "FileProcessorService initialized",
-            max_file_size_mb=max_file_size_bytes / (1024 * 1024),
-            outbox_enabled=self._use_outbox,
-        )
+        self._allowed_bucket = allowed_bucket_name
+        self._allowed_region = allowed_region
+        self._quarantine_prefix = quarantine_prefix.strip("/") or "quarantine"
 
     def handle(self, event: FileEvent) -> ProcessingResult:
-        """
-        Handle a file event (main entry point).
-
-        Args:
-            event: The file event to process.
-
-        Returns:
-            ProcessingResult with the outcome.
-
-        Raises:
-            ProcessingError: If processing fails (retryable).
-            NonRetryableError: If processing fails (non-retryable).
-        """
+        """Handle an input event, preserving retry/DLQ semantics."""
         log = logger.bind(
             event_id=event.event_id_str,
             file_id=event.file_id_str,
@@ -109,58 +70,93 @@ class FileProcessorService:
             event_type=event.event_type.value,
             redacted_filename=event.file_metadata.redacted_filename,
         )
-
         started_at = datetime.now(UTC)
         result = ProcessingResult(
             event_id=event.event_id_str,
             correlation_id=event.correlation_id_str,
-            status=ProcessingStatus.IN_PROGRESS,
+            status=ProcessingStatus.PROCESSING,
             started_at=started_at,
         )
 
+        duplicate = self._idempotent_result(event, result)
+        if duplicate is not None:
+            log.info("Duplicate input event acknowledged idempotently")
+            return duplicate
+
         try:
-            log.info("Starting file processing")
-
             if event.event_type == EventType.FILE_UPLOADED:
-                result = self._process_uploaded_file(event, result, log)
-            elif event.event_type == EventType.FILE_SCANNED:
-                result = self._process_scanned_file(event, result, log)
-            else:
-                log.warning("Unhandled event type", event_type=event.event_type)
-                result = result.with_completion(ProcessingStatus.COMPLETED)
-
-            log.info(
-                "File processing completed",
-                status=result.status.value,
-                duration_ms=result.duration_ms,
+                return self._process_uploaded_file(event, result, log)
+            if event.event_type == EventType.FILE_SCANNED:
+                return self._process_scanned_file(event, result, log)
+            log.info("Ignoring terminal processor event")
+            return result.with_completion(ProcessingStatus.COMPLETED)
+        except NonRetryableError as error:
+            self._handle_failure(
+                event,
+                error.message,
+                error.error_code,
+                retryable=False,
             )
-
-            return result
-
-        except NonRetryableError:
             raise
-
-        except StorageError as e:
-            log.error("Storage error during processing", error=str(e))
-            self._handle_failure(event, str(e), "STORAGE_ERROR")
-            raise ProcessingError(
-                message=str(e),
-                event_id=str(event.event_id),
-                correlation_id=str(event.correlation_id),
+        except StorageError as error:
+            self._handle_failure(
+                event,
+                error.message,
+                "STORAGE_ERROR",
                 retryable=True,
-                cause=e,
-            ) from e
-
-        except Exception as e:
-            log.exception("Unexpected error during processing")
-            self._handle_failure(event, str(e), "UNEXPECTED_ERROR")
+            )
             raise ProcessingError(
-                message=f"Unexpected error: {e}",
-                event_id=str(event.event_id),
-                correlation_id=str(event.correlation_id),
+                message=error.message,
+                event_id=event.event_id_str,
+                correlation_id=event.correlation_id_str,
                 retryable=True,
-                cause=e,
-            ) from e
+                cause=error,
+            ) from error
+        except ProcessingError as error:
+            self._handle_failure(
+                event,
+                error.message,
+                error.error_code,
+                retryable=error.retryable,
+            )
+            raise
+        except Exception as error:
+            self._handle_failure(
+                event,
+                str(error),
+                "UNEXPECTED_ERROR",
+                retryable=True,
+            )
+            raise ProcessingError(
+                message=f"Unexpected error: {error}",
+                event_id=event.event_id_str,
+                correlation_id=event.correlation_id_str,
+                retryable=True,
+                cause=error,
+            ) from error
+
+    def _idempotent_result(
+        self,
+        event: FileEvent,
+        result: ProcessingResult,
+    ) -> ProcessingResult | None:
+        existing = self._metadata.get_by_id(event.file_id_str)
+        if existing is None or existing.last_processed_event_id != event.event_id_str:
+            return None
+        if existing.status == ProcessingStatus.COMPLETED:
+            return result.with_completion(
+                ProcessingStatus.COMPLETED,
+                metadata={
+                    "duplicate": True,
+                    "file_hash": existing.file_hash,
+                    "is_safe": existing.is_safe,
+                    "findings_count": len(existing.scan_findings),
+                },
+            )
+        raise NonRetryableError(
+            message=existing.error_message or "Previously rejected input event",
+            error_code=existing.error_code or "PREVIOUSLY_REJECTED",
+        )
 
     def _process_uploaded_file(
         self,
@@ -168,89 +164,92 @@ class FileProcessorService:
         result: ProcessingResult,
         log: Any,
     ) -> ProcessingResult:
-        """Process a newly uploaded file."""
+        self._validate_event_location(event)
         if event.file_metadata.file_size_bytes > self._max_file_size:
             raise NonRetryableError(
-                message=f"File too large: {event.file_metadata.file_size_bytes} bytes "
-                f"(max: {self._max_file_size} bytes)",
+                message=(
+                    f"Declared file size {event.file_metadata.file_size_bytes} exceeds "
+                    f"the configured maximum {self._max_file_size}"
+                ),
+                error_code="DECLARED_FILE_TOO_LARGE",
             )
 
         timestamp = datetime.now(UTC).isoformat()
-        metadata_record = self._create_metadata_record(event, timestamp)
-        metadata_record.status = ProcessingStatus.IN_PROGRESS
+        record = self._create_metadata_record(event, timestamp)
+        record.status = ProcessingStatus.PROCESSING
+        self._metadata.save(record)
 
-        self._metadata.save(metadata_record)
-        log.debug("Initial metadata record saved")
-
-        file_content = self._storage.download(
-            bucket_name=event.storage_location.bucket_name,
-            object_key=event.storage_location.object_key,
+        content = self._storage.download(
+            event.storage_location.bucket_name,
+            event.storage_location.object_key,
+            max_bytes=self._max_file_size,
         )
+        self._validate_actual_object(event, content)
 
-        log.debug(
-            "File downloaded",
-            size_bytes=file_content.content_length,
-            encrypted=file_content.is_encrypted,
-        )
-
-        file_hash = self._crypto.compute_hash(file_content.data, "SHA-256")
-        log.debug("File hash computed", hash=file_hash[:16] + "...")
-
-        expected_hash = event.file_metadata.checksum_sha256
-        if file_hash != expected_hash:
+        file_hash = self._crypto.compute_hash(content.data, "SHA-256")
+        if file_hash != event.file_metadata.checksum_sha256:
             raise NonRetryableError(
-                message=f"Checksum mismatch: event declares SHA-256 {expected_hash} "
-                f"but downloaded content hashes to {file_hash}",
-            )
-        log.debug("File integrity verified against event checksum")
-
-        analysis_result = self._analyze_file(file_content, file_hash, log)
-
-        metadata_record.file_hash = file_hash
-        metadata_record.is_safe = analysis_result.is_safe
-        metadata_record.scan_findings = analysis_result.findings
-        metadata_record.status = ProcessingStatus.COMPLETED
-        metadata_record.processed_at = datetime.now(UTC).isoformat()
-
-        if analysis_result.is_safe:
-            outbox_event = OutboxEvent.for_file_processed(
-                file_id=event.file_id_str,
-                correlation_id=str(event.correlation_id),
-                file_hash=file_hash,
-                is_safe=True,
-                bucket_name=event.storage_location.bucket_name,
-                object_key=event.storage_location.object_key,
-            )
-        else:
-            outbox_event = OutboxEvent.for_file_quarantined(
-                file_id=event.file_id_str,
-                correlation_id=str(event.correlation_id),
-                reason="File failed security analysis",
-                findings=analysis_result.findings,
+                message="Downloaded object SHA-256 does not match the canonical event checksum",
+                error_code="CHECKSUM_MISMATCH",
             )
 
-        if self._use_outbox and self._outbox:
-            self._outbox.save_with_outbox(metadata_record, outbox_event)
-            log.info(
-                "Metadata and outbox event saved transactionally",
-                event_id=outbox_event.event_id,
-                event_type=outbox_event.event_type.value,
-            )
-        else:
-            self._metadata.save(metadata_record)
-            log.debug("Metadata record updated with analysis results")
+        analysis = self._analyze_file(content, file_hash, log)
+        output_location = event.storage_location
+        if not analysis.is_safe:
+            output_location = self._quarantine_file(event, file_hash)
 
-            completion_event = event.with_new_event_type(EventType.ANALYSIS_COMPLETED)
-            self._publisher.publish(completion_event)
-            log.info("Completion event published (direct mode)")
+        processed_at = datetime.now(UTC)
+        record.file_hash = file_hash
+        record.is_safe = analysis.is_safe
+        record.scan_findings = analysis.findings
+        record.status = ProcessingStatus.COMPLETED
+        record.processed_at = processed_at.isoformat()
+        record.updated_at = processed_at.isoformat()
+        record.last_processed_event_id = event.event_id_str
+        record.file_size_bytes = content.content_length
+        record.mime_type = content.content_type or event.file_metadata.mime_type
+        record.is_encrypted = content.encryption_algorithm == "aws:kms"
+        record.encryption_algorithm = event.security_context.encryption_algorithm
+        record.kms_key_id = content.kms_key_id
+        record.bucket_name = output_location.bucket_name
+        record.object_key = output_location.object_key
+
+        completion = event.with_new_event_type(
+            EventType.ANALYSIS_COMPLETED,
+            processing_result=ProcessingResultDetails(
+                is_safe=analysis.is_safe,
+                findings=analysis.findings,
+                processed_at=processed_at,
+                file_hash_sha256=file_hash,
+                scan_engine=analysis.scan_engine,
+            ),
+            storage_location=output_location,
+        )
+        outbox_event = OutboxEvent.from_file_event(completion)
+        self._persist_and_publish(record, completion, outbox_event)
+        if not analysis.is_safe:
+            try:
+                # The copy and its canonical location are durable now. Deleting the
+                # encrypted source is cleanup only; failure must not roll back or
+                # overwrite the committed COMPLETED state.
+                self._storage.delete(
+                    event.storage_location.bucket_name,
+                    event.storage_location.object_key,
+                )
+            except StorageError as cleanup_error:
+                log.warning(
+                    "Quarantine source cleanup failed after durable commit",
+                    error=str(cleanup_error),
+                )
 
         return result.with_completion(
-            status=ProcessingStatus.COMPLETED,
+            ProcessingStatus.COMPLETED,
             metadata={
                 "file_hash": file_hash,
-                "is_safe": analysis_result.is_safe,
-                "findings_count": len(analysis_result.findings),
+                "is_safe": analysis.is_safe,
+                "findings_count": len(analysis.findings),
                 "outbox_event_id": outbox_event.event_id if self._use_outbox else None,
+                "quarantined": not analysis.is_safe,
             },
         )
 
@@ -260,17 +259,60 @@ class FileProcessorService:
         result: ProcessingResult,
         log: Any,
     ) -> ProcessingResult:
-        """Process a file that has been scanned externally."""
         timestamp = datetime.now(UTC).isoformat()
-        metadata_record = self._create_metadata_record(event, timestamp)
-        metadata_record.status = ProcessingStatus.COMPLETED
-        metadata_record.processed_at = timestamp
-
-        self._metadata.save(metadata_record)
-
-        log.info("Scanned file metadata saved")
-
+        record = self._create_metadata_record(event, timestamp)
+        record.status = ProcessingStatus.COMPLETED
+        record.processed_at = timestamp
+        record.last_processed_event_id = event.event_id_str
+        self._metadata.save(record)
+        log.info("External scan event recorded")
         return result.with_completion(ProcessingStatus.COMPLETED)
+
+    def _validate_event_location(self, event: FileEvent) -> None:
+        if self._allowed_bucket and event.storage_location.bucket_name != self._allowed_bucket:
+            raise NonRetryableError(
+                message="Event references a bucket outside the configured trust boundary",
+                error_code="UNTRUSTED_BUCKET",
+            )
+        if self._allowed_region and event.storage_location.region != self._allowed_region:
+            raise NonRetryableError(
+                message="Event storage region does not match the processor region",
+                error_code="UNTRUSTED_REGION",
+            )
+
+    def _validate_actual_object(self, event: FileEvent, content: FileContent) -> None:
+        actual_bytes = len(content.data)
+        if content.content_length != actual_bytes:
+            raise NonRetryableError(
+                message="S3 ContentLength does not match the streamed byte count",
+                error_code="S3_LENGTH_MISMATCH",
+            )
+        if actual_bytes != event.file_metadata.file_size_bytes:
+            raise NonRetryableError(
+                message="Actual S3 object size does not match the canonical event",
+                error_code="FILE_SIZE_MISMATCH",
+            )
+        if content.encryption_algorithm != "aws:kms":
+            raise NonRetryableError(
+                message="S3 object is not encrypted with SSE-KMS",
+                error_code="INVALID_S3_ENCRYPTION",
+            )
+        if content.kms_key_id != event.security_context.kms_key_id:
+            raise NonRetryableError(
+                message="Actual S3 KMS key ARN does not match the canonical event",
+                error_code="KMS_KEY_MISMATCH",
+            )
+
+    def _quarantine_file(self, event: FileEvent, file_hash: str) -> StorageLocation:
+        bucket = event.storage_location.bucket_name
+        source_key = event.storage_location.object_key
+        destination_key = f"{self._quarantine_prefix}/{event.file_id_str}/{file_hash}"
+        self._storage.copy(bucket, source_key, bucket, destination_key)
+        return StorageLocation(
+            bucket_name=bucket,
+            object_key=destination_key,
+            region=event.storage_location.region,
+        )
 
     def _analyze_file(
         self,
@@ -278,99 +320,90 @@ class FileProcessorService:
         file_hash: str,
         log: Any,
     ) -> AnalysisResult:
-        """
-        Analyze file content for security and metadata.
-
-        This is a simplified implementation. In production, you would
-        integrate with virus scanners, content analysis services, etc.
-        """
+        """Apply a transparent header policy; this is not an antivirus scanner."""
         findings: list[str] = []
-
-        data = content.data
-
-        if len(data) == 0:
-            findings.append("File is empty")
-
-        if data[:2] == b"MZ":  # DOS/Windows executable
-            findings.append("Potentially executable content (PE format)")
-
-        if data[:4] == b"\x7fELF":  # Linux executable
-            findings.append("Potentially executable content (ELF format)")
-
-        if data[:4] == b"%PDF":  # PDF
-            log.debug("PDF file detected")
-
-        is_safe = len([f for f in findings if "executable" in f.lower()]) == 0
-
-        log.debug(
-            "File analysis completed",
+        if not content.data:
+            findings.append("Empty content is not accepted")
+        elif content.data.startswith(b"MZ"):
+            findings.append("Executable PE header is denied by policy")
+        elif content.data.startswith(b"\x7fELF"):
+            findings.append("Executable ELF header is denied by policy")
+        is_safe = not findings
+        log.info(
+            "Header policy analysis completed",
             is_safe=is_safe,
             findings_count=len(findings),
+            scan_engine="fsamp-header-policy/1",
         )
-
         return AnalysisResult(
             file_hash_sha256=file_hash,
             is_safe=is_safe,
-            scan_engine="fsamp-internal",
+            scan_engine="fsamp-header-policy/1",
             findings=findings,
         )
 
-    def _create_metadata_record(
-        self,
-        event: FileEvent,
-        timestamp: str,
-    ) -> MetadataRecord:
-        """Create a metadata record from an event."""
+    def _create_metadata_record(self, event: FileEvent, timestamp: str) -> MetadataRecord:
         return MetadataRecord(
             file_id=event.file_id_str,
             timestamp=timestamp,
-            correlation_id=str(event.correlation_id),
+            correlation_id=event.correlation_id_str,
             original_filename=event.file_metadata.original_filename,
             file_size_bytes=event.file_metadata.file_size_bytes,
             mime_type=event.file_metadata.mime_type,
             bucket_name=event.storage_location.bucket_name,
             object_key=event.storage_location.object_key,
             status=ProcessingStatus.PENDING,
+            checksum_sha256=event.file_metadata.checksum_sha256,
             is_encrypted=event.security_context.is_encrypted,
+            encryption_algorithm=event.security_context.encryption_algorithm,
             kms_key_id=event.security_context.kms_key_id,
         )
+
+    def _persist_and_publish(
+        self,
+        record: MetadataRecord,
+        event: FileEvent,
+        outbox_event: OutboxEvent,
+    ) -> None:
+        if self._use_outbox and self._outbox is not None:
+            self._outbox.save_with_outbox(record, outbox_event)
+            return
+        self._metadata.save(record)
+        self._publisher.publish(event)
 
     def _handle_failure(
         self,
         event: FileEvent,
         error_message: str,
         error_code: str,
+        *,
+        retryable: bool,
     ) -> None:
-        """Handle processing failure - update metadata and publish failure event."""
+        """Persist diagnostics atomically before allowing SQS/Lambda redrive."""
         try:
-            timestamp = datetime.now(UTC).isoformat()
-            record = self._create_metadata_record(event, timestamp)
+            failed_at = datetime.now(UTC)
+            record = self._create_metadata_record(event, failed_at.isoformat())
             record.status = ProcessingStatus.FAILED
-            record.error_message = error_message
-            record.error_code = error_code
-
-            outbox_event = OutboxEvent.for_file_failed(
-                file_id=event.file_id_str,
-                correlation_id=str(event.correlation_id),
-                error_code=error_code,
-                error_message=error_message,
+            record.error_message = error_message[:2000]
+            record.error_code = error_code[:100]
+            record.processed_at = failed_at.isoformat()
+            if not retryable:
+                record.last_processed_event_id = event.event_id_str
+            failure_event = event.with_new_event_type(
+                EventType.PROCESSING_FAILED,
+                failure=FailureDetails(
+                    code=record.error_code,
+                    message=record.error_message,
+                    failed_at=failed_at,
+                    retryable=retryable,
+                ),
             )
-
-            if self._use_outbox and self._outbox:
-                self._outbox.save_with_outbox(record, outbox_event)
-                logger.info(
-                    "Failure metadata and outbox event saved transactionally",
-                    event_id=outbox_event.event_id,
-                )
-            else:
-                self._metadata.save(record)
-
-                failure_event = event.with_new_event_type(EventType.PROCESSING_FAILED)
-                self._publisher.publish(failure_event)
-
-        except Exception as e:
+            outbox_event = OutboxEvent.from_file_event(failure_event)
+            self._persist_and_publish(record, failure_event, outbox_event)
+        except Exception as handler_error:
             logger.exception(
-                "Failed to handle processing failure",
+                "Failed to persist processing diagnostics",
                 original_error=error_message,
-                handler_error=str(e),
+                handler_error=str(handler_error),
+                file_id=event.file_id_str,
             )

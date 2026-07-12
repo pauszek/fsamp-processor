@@ -35,6 +35,7 @@ def create_application(settings: Settings) -> SQSConsumer:
     Returns:
         Configured SQS consumer ready to start.
     """
+    settings.validate_processor_runtime()
     logger.info("Creating application components")
 
     aws_factory = AWSClientFactory(
@@ -67,6 +68,7 @@ def create_application(settings: Settings) -> SQSConsumer:
             dynamodb_client=dynamodb_client,
             metadata_table_name=settings.dynamodb_table_name,
             outbox_table_name=settings.outbox_table_name,
+            retention_seconds=settings.outbox_retention_seconds,
         )
         logger.info("Outbox Pattern enabled", outbox_table=settings.outbox_table_name)
 
@@ -91,6 +93,9 @@ def create_application(settings: Settings) -> SQSConsumer:
         max_file_size_bytes=settings.max_file_size_bytes,
         outbox_repo=outbox_repo,
         use_outbox_pattern=outbox_repo is not None,
+        allowed_bucket_name=settings.s3_bucket_name,
+        allowed_region=settings.aws_region,
+        quarantine_prefix=settings.quarantine_prefix,
     )
 
     consumer = SQSConsumer(

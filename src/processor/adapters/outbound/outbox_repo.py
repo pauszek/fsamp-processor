@@ -1,402 +1,303 @@
-"""
-DynamoDB implementation of the Outbox Pattern for reliable event publishing.
+"""Transactional DynamoDB outbox repository."""
 
-The Outbox Pattern ensures that database writes and event publishing are atomic.
-Events are first written to the outbox as part of the same DynamoDB transaction
-as the business data, then published asynchronously by a separate Lambda
-triggered by DynamoDB Streams.
-
-Architecture:
-    FileProcessor -> [DynamoDB Transaction] -> Metadata + Outbox
-                                                    |
-                                            DynamoDB Streams
-                                                    |
-                                            Outbox Publisher Lambda -> SNS
-"""
+from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from math import ceil
 from typing import Any
 
 import structlog
 from botocore.exceptions import ClientError
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
+from processor.adapters.outbound.aws_retry import aws_retry
+from processor.adapters.outbound.dynamodb_repo import build_metadata_update
 from processor.domain.exceptions import StorageError
-from processor.domain.models import MetadataRecord, OutboxEvent, OutboxStatus
+from processor.domain.models import (
+    OUTBOX_DEFAULT_RETENTION_SECONDS,
+    OUTBOX_SHARD_COUNT,
+    MetadataRecord,
+    OutboxEvent,
+    OutboxStatus,
+    outbox_shard,
+)
 from processor.ports.outbound import OutboxRepository
 
 logger = structlog.get_logger(__name__)
-DDB_STATUS_NAME = "#status"
-DDB_STATUS_VALUE = ":status"
-DDB_GSI1PK_VALUE = ":gsi1pk"
+
+_STATUS_NAME = "#status"
+_STATUS_VALUE = ":status"
 
 
 class DynamoDBOutboxRepository(OutboxRepository):
-    """
-    DynamoDB implementation of Outbox Repository.
-
-    Uses DynamoDB transactions for atomic writes of metadata and outbox events.
-    The outbox events are stored in a separate table that triggers DynamoDB Streams
-    for the outbox publisher Lambda.
-
-    Table Design (single-table design for metadata, separate for outbox):
-
-    Metadata Table:
-        PK: FILE#<file_id>
-        SK: TS#<timestamp>
-        GSI1PK: STATUS#<status>
-        GSI1SK: <timestamp>
-
-    Outbox Table:
-        PK: OUTBOX#<aggregate_type>
-        SK: EVENT#<event_id>
-        GSI1PK: STATUS#<status>
-        GSI1SK: <created_at>
-    """
+    """Atomically update current metadata and insert one canonical event."""
 
     def __init__(
         self,
         dynamodb_client: Any,
         metadata_table_name: str,
         outbox_table_name: str,
+        retention_seconds: int = OUTBOX_DEFAULT_RETENTION_SECONDS,
     ) -> None:
-        """
-        Initialize DynamoDB Outbox Repository.
-
-        Args:
-            dynamodb_client: Boto3 DynamoDB client.
-            metadata_table_name: Name of the metadata table.
-            outbox_table_name: Name of the outbox table.
-        """
         self._client = dynamodb_client
         self._metadata_table_name = metadata_table_name
         self._outbox_table_name = outbox_table_name
-        logger.debug(
-            "DynamoDB outbox repository initialized",
-            metadata_table=metadata_table_name,
-            outbox_table=outbox_table_name,
-        )
+        self._retention_seconds = retention_seconds
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
+    @aws_retry()
     def save_with_outbox(
         self,
         record: MetadataRecord,
         outbox_event: OutboxEvent,
     ) -> None:
-        """
-        Save metadata record and outbox event in a single transaction.
-
-        This uses DynamoDB TransactWriteItems to ensure atomicity.
-        Either both writes succeed, or both fail.
-        """
-        log = logger.bind(
-            file_id=record.file_id,
-            event_id=outbox_event.event_id,
-            event_type=outbox_event.event_type,
-        )
-
+        """Update ``FILE#id/METADATA`` and conditionally insert the outbox row."""
+        update, names, values = build_metadata_update(record)
+        outbox_item = outbox_event.to_dynamodb_item()
         try:
-            log.info("Saving metadata with outbox event (transactional)")
-
-            now = datetime.now(UTC).isoformat()
-            record.updated_at = now
-            if not record.created_at:
-                record.created_at = now
-
-            metadata_item = record.to_dynamodb_item()
-            metadata_item["GSI1PK"] = {"S": f"STATUS#{record.status.value}"}
-            metadata_item["GSI1SK"] = {"S": record.timestamp}
-
-            outbox_item = outbox_event.to_dynamodb_item()
-
             self._client.transact_write_items(
                 TransactItems=[
                     {
-                        "Put": {
+                        "Update": {
                             "TableName": self._metadata_table_name,
-                            "Item": metadata_item,
+                            "Key": {
+                                "PK": {"S": f"FILE#{record.file_id}"},
+                                "SK": {"S": "METADATA"},
+                            },
+                            "UpdateExpression": update,
+                            "ExpressionAttributeNames": names,
+                            "ExpressionAttributeValues": values,
+                            "ConditionExpression": "attribute_exists(PK) AND attribute_exists(SK)",
                         }
                     },
                     {
                         "Put": {
                             "TableName": self._outbox_table_name,
                             "Item": outbox_item,
+                            "ConditionExpression": (
+                                "attribute_not_exists(PK) AND attribute_not_exists(SK)"
+                            ),
                         }
                     },
                 ]
             )
-
-            log.info(
-                "Transactional write succeeded",
-                metadata_pk=metadata_item["PK"]["S"],
-                outbox_pk=outbox_item["PK"]["S"],
-            )
-
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "Unknown")
-
-            if error_code == "TransactionCanceledException":
-                reasons = e.response.get("CancellationReasons", [])
-                log.warning("Transaction cancelled", reasons=[r.get("Code") for r in reasons])
-
-            log.exception("Failed to save with outbox")
+        except ClientError as error:
+            if self._is_idempotent_replay(error, outbox_event):
+                # The first transaction already inserted the canonical event. A later
+                # retry may still need to restore the current metadata state after a
+                # PROCESSING update, so apply only the idempotent metadata update.
+                self._client.update_item(
+                    TableName=self._metadata_table_name,
+                    Key={
+                        "PK": {"S": f"FILE#{record.file_id}"},
+                        "SK": {"S": "METADATA"},
+                    },
+                    UpdateExpression=update,
+                    ExpressionAttributeNames=names,
+                    ExpressionAttributeValues=values,
+                    ConditionExpression="attribute_exists(PK) AND attribute_exists(SK)",
+                )
+                logger.info(
+                    "Idempotent outbox replay ignored",
+                    event_id=outbox_event.event_id,
+                    file_id=record.file_id,
+                )
+                return
             raise StorageError(
-                message=f"Failed to save with outbox: {e}",
+                message=f"Failed to save metadata with outbox: {error}",
                 storage_type="dynamodb",
                 operation="transact_write",
                 resource=f"{self._metadata_table_name}/{record.file_id}",
-                cause=e,
-            ) from e
+                cause=error,
+            ) from error
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
-    def get_pending_events(
+    def _is_idempotent_replay(
         self,
-        limit: int = 100,
-    ) -> list[OutboxEvent]:
-        """Get pending outbox events for publishing."""
-        log = logger.bind(limit=limit)
-
+        error: ClientError,
+        outbox_event: OutboxEvent,
+    ) -> bool:
+        if error.response.get("Error", {}).get("Code") != "TransactionCanceledException":
+            return False
         try:
-            response = self._client.query(
+            response = self._client.get_item(
                 TableName=self._outbox_table_name,
-                IndexName="GSI1",
-                KeyConditionExpression=f"GSI1PK = {DDB_STATUS_VALUE}",
-                ExpressionAttributeValues={
-                    DDB_STATUS_VALUE: {"S": f"STATUS#{OutboxStatus.PENDING.value}"},
+                Key={
+                    "PK": {"S": str(outbox_event.outbox_partition)},
+                    "SK": {"S": f"EVENT#{outbox_event.event_id}"},
                 },
-                ScanIndexForward=True,  # Oldest first (FIFO processing)
-                Limit=limit,
+                ConsistentRead=True,
             )
+        except ClientError:
+            return False
+        item = response.get("Item")
+        if not item:
+            return False
+        persisted = OutboxEvent.from_dynamodb_item(item)
+        return (
+            persisted.event_id == outbox_event.event_id
+            and persisted.aggregate_id == outbox_event.aggregate_id
+            and persisted.payload == outbox_event.payload
+        )
 
-            items = response.get("Items", [])
-            events = [OutboxEvent.from_dynamodb_item(item) for item in items]
+    def _get_events(self, status: OutboxStatus, limit: int) -> list[OutboxEvent]:
+        events: list[OutboxEvent] = []
+        per_shard_limit = max(1, ceil(limit / OUTBOX_SHARD_COUNT))
+        for shard_number in range(OUTBOX_SHARD_COUNT):
+            shard = f"{shard_number:02x}"
+            start_key: dict[str, Any] | None = None
+            shard_count = 0
+            while shard_count < per_shard_limit:
+                request: dict[str, Any] = {
+                    "TableName": self._outbox_table_name,
+                    "IndexName": "GSI1",
+                    "KeyConditionExpression": "GSI1PK = :status",
+                    "ExpressionAttributeValues": {
+                        _STATUS_VALUE: {"S": f"STATUS#{status.value}#{shard}"}
+                    },
+                    "ScanIndexForward": True,
+                    "Limit": per_shard_limit - shard_count,
+                }
+                if start_key:
+                    request["ExclusiveStartKey"] = start_key
+                response = self._client.query(**request)
+                page = [OutboxEvent.from_dynamodb_item(item) for item in response.get("Items", [])]
+                events.extend(page)
+                shard_count += len(page)
+                start_key = response.get("LastEvaluatedKey")
+                if not start_key:
+                    break
+        return sorted(events, key=lambda event: event.created_at)[:limit]
 
-            log.debug("Retrieved pending outbox events", count=len(events))
-            return events
+    @aws_retry()
+    def get_pending_events(self, limit: int = 100) -> list[OutboxEvent]:
+        return self._get_events(OutboxStatus.PENDING, limit)
 
-        except ClientError as e:
-            log.exception("Failed to get pending events")
-            raise StorageError(
-                message=f"Failed to get pending events: {e}",
-                storage_type="dynamodb",
-                operation="query",
-                resource=self._outbox_table_name,
-                cause=e,
-            ) from e
+    @aws_retry()
+    def get_failed_events(self, limit: int = 100) -> list[OutboxEvent]:
+        return self._get_events(OutboxStatus.FAILED, limit)
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
+    def _outbox_key(
+        self,
+        event_id: str,
+        aggregate_type: str,
+        aggregate_id: str | None,
+    ) -> dict[str, dict[str, str]]:
+        partition = (
+            f"OUTBOX#{aggregate_type}#{aggregate_id}"
+            if aggregate_id is not None
+            else f"OUTBOX#{aggregate_type}"
+        )
+        return {"PK": {"S": partition}, "SK": {"S": f"EVENT#{event_id}"}}
+
+    @aws_retry()
     def mark_published(
         self,
         event_id: str,
         aggregate_type: str = "FileProcessing",
+        aggregate_id: str | None = None,
     ) -> None:
-        """Mark an outbox event as published."""
-        log = logger.bind(event_id=event_id)
-
+        """Compatibility API; the stream publisher uses token-fenced updates."""
+        now = datetime.now(UTC)
+        shard = outbox_shard(aggregate_id) if aggregate_id else "00"
         try:
-            now = datetime.now(UTC).isoformat()
-            ttl = int((datetime.now(UTC) + timedelta(hours=24)).timestamp())
-
             self._client.update_item(
                 TableName=self._outbox_table_name,
-                Key={
-                    "PK": {"S": f"OUTBOX#{aggregate_type}"},
-                    "SK": {"S": f"EVENT#{event_id}"},
-                },
+                Key=self._outbox_key(event_id, aggregate_type, aggregate_id),
                 UpdateExpression=(
-                    f"SET {DDB_STATUS_NAME} = {DDB_STATUS_VALUE}, "
-                    f"publishedAt = :published, GSI1PK = {DDB_GSI1PK_VALUE}, #ttl = :ttl"
+                    "SET #status = :published, publishedAt = :now, " "GSI1PK = :gsi, #ttl = :ttl"
                 ),
-                ExpressionAttributeNames={
-                    DDB_STATUS_NAME: "status",
-                    "#ttl": "ttl",
-                },
+                ExpressionAttributeNames={_STATUS_NAME: "status", "#ttl": "ttl"},
                 ExpressionAttributeValues={
-                    DDB_STATUS_VALUE: {"S": OutboxStatus.PUBLISHED.value},
-                    ":published": {"S": now},
-                    DDB_GSI1PK_VALUE: {"S": f"STATUS#{OutboxStatus.PUBLISHED.value}"},
-                    ":ttl": {"N": str(ttl)},
+                    ":published": {"S": OutboxStatus.PUBLISHED.value},
+                    ":now": {"S": now.isoformat()},
+                    ":gsi": {"S": f"STATUS#PUBLISHED#{shard}"},
+                    ":ttl": {"N": str(int(now.timestamp()) + self._retention_seconds)},
                 },
+                ConditionExpression="#status <> :published",
             )
-
-            log.info("Outbox event marked as published")
-
-        except ClientError as e:
-            log.exception("Failed to mark event as published")
+        except ClientError as error:
             raise StorageError(
-                message=f"Failed to mark event published: {e}",
+                message=f"Failed to mark outbox event published: {error}",
                 storage_type="dynamodb",
                 operation="update",
                 resource=f"{self._outbox_table_name}/{event_id}",
-                cause=e,
-            ) from e
+                cause=error,
+            ) from error
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
+    @aws_retry()
     def mark_failed(
         self,
         event_id: str,
         error: str,
         aggregate_type: str = "FileProcessing",
+        aggregate_id: str | None = None,
     ) -> None:
-        """Mark an outbox event as failed."""
-        log = logger.bind(event_id=event_id, error=error)
-
+        """Compatibility API that never downgrades a published event."""
+        shard = outbox_shard(aggregate_id) if aggregate_id else "00"
         try:
             self._client.update_item(
                 TableName=self._outbox_table_name,
-                Key={
-                    "PK": {"S": f"OUTBOX#{aggregate_type}"},
-                    "SK": {"S": f"EVENT#{event_id}"},
-                },
+                Key=self._outbox_key(event_id, aggregate_type, aggregate_id),
                 UpdateExpression=(
-                    f"SET {DDB_STATUS_NAME} = {DDB_STATUS_VALUE}, lastError = :error, "
-                    f"retryCount = retryCount + :inc, GSI1PK = {DDB_GSI1PK_VALUE}"
+                    "SET #status = :failed, lastError = :error, "
+                    "retryCount = if_not_exists(retryCount, :zero) + :inc, GSI1PK = :gsi"
                 ),
-                ExpressionAttributeNames={
-                    DDB_STATUS_NAME: "status",
-                },
+                ExpressionAttributeNames={_STATUS_NAME: "status"},
                 ExpressionAttributeValues={
-                    DDB_STATUS_VALUE: {"S": OutboxStatus.FAILED.value},
-                    ":error": {"S": error},
+                    ":failed": {"S": OutboxStatus.FAILED.value},
+                    ":published": {"S": OutboxStatus.PUBLISHED.value},
+                    ":error": {"S": error[:2000]},
+                    ":zero": {"N": "0"},
                     ":inc": {"N": "1"},
-                    DDB_GSI1PK_VALUE: {"S": f"STATUS#{OutboxStatus.FAILED.value}"},
+                    ":gsi": {"S": f"STATUS#FAILED#{shard}"},
                 },
+                ConditionExpression="#status <> :published",
             )
-
-            log.warning("Outbox event marked as failed")
-
-        except ClientError as e:
-            log.exception("Failed to mark event as failed")
+        except ClientError as client_error:
             raise StorageError(
-                message=f"Failed to mark event failed: {e}",
+                message=f"Failed to mark outbox event failed: {client_error}",
                 storage_type="dynamodb",
                 operation="update",
                 resource=f"{self._outbox_table_name}/{event_id}",
-                cause=e,
-            ) from e
+                cause=client_error,
+            ) from client_error
 
-    @retry(
-        retry=retry_if_exception_type(ClientError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-    )
-    def get_failed_events(
-        self,
-        limit: int = 100,
-    ) -> list[OutboxEvent]:
-        """Get failed outbox events for retry."""
-        log = logger.bind(limit=limit)
+    @aws_retry()
+    def delete_old_published(self, older_than_hours: int = 24) -> int:
+        """Delete published rows across all status shards, following pagination."""
+        cutoff = (datetime.now(UTC) - timedelta(hours=older_than_hours)).isoformat()
+        keys: list[dict[str, Any]] = []
+        for shard_number in range(OUTBOX_SHARD_COUNT):
+            shard = f"{shard_number:02x}"
+            start_key: dict[str, Any] | None = None
+            while True:
+                request: dict[str, Any] = {
+                    "TableName": self._outbox_table_name,
+                    "IndexName": "GSI1",
+                    "KeyConditionExpression": "GSI1PK = :status AND GSI1SK < :cutoff",
+                    "ExpressionAttributeValues": {
+                        _STATUS_VALUE: {"S": f"STATUS#PUBLISHED#{shard}"},
+                        ":cutoff": {"S": cutoff},
+                    },
+                    "ProjectionExpression": "PK, SK",
+                }
+                if start_key:
+                    request["ExclusiveStartKey"] = start_key
+                response = self._client.query(**request)
+                keys.extend(response.get("Items", []))
+                start_key = response.get("LastEvaluatedKey")
+                if not start_key:
+                    break
 
-        try:
-            response = self._client.query(
-                TableName=self._outbox_table_name,
-                IndexName="GSI1",
-                KeyConditionExpression=f"GSI1PK = {DDB_STATUS_VALUE}",
-                ExpressionAttributeValues={
-                    DDB_STATUS_VALUE: {"S": f"STATUS#{OutboxStatus.FAILED.value}"},
-                },
-                ScanIndexForward=True,
-                Limit=limit,
-            )
-
-            items = response.get("Items", [])
-            events = [OutboxEvent.from_dynamodb_item(item) for item in items]
-
-            log.debug("Retrieved failed outbox events", count=len(events))
-            return events
-
-        except ClientError as e:
-            log.exception("Failed to get failed events")
-            raise StorageError(
-                message=f"Failed to get failed events: {e}",
-                storage_type="dynamodb",
-                operation="query",
-                resource=self._outbox_table_name,
-                cause=e,
-            ) from e
-
-    def delete_old_published(
-        self,
-        older_than_hours: int = 24,
-    ) -> int:
-        """
-        Delete old published events (manual cleanup).
-
-        Note: DynamoDB TTL should handle this automatically,
-        but this provides manual cleanup capability.
-        """
-        log = logger.bind(older_than_hours=older_than_hours)
-        deleted_count = 0
-
-        try:
-            cutoff = (datetime.now(UTC) - timedelta(hours=older_than_hours)).isoformat()
-
-            response = self._client.query(
-                TableName=self._outbox_table_name,
-                IndexName="GSI1",
-                KeyConditionExpression=f"GSI1PK = {DDB_STATUS_VALUE} AND GSI1SK < :cutoff",
-                ExpressionAttributeValues={
-                    DDB_STATUS_VALUE: {"S": f"STATUS#{OutboxStatus.PUBLISHED.value}"},
-                    ":cutoff": {"S": cutoff},
-                },
-                ProjectionExpression="PK, SK",
-                Limit=1000,
-            )
-
-            items = response.get("Items", [])
-
-            for i in range(0, len(items), 25):
-                batch = items[i : i + 25]
-                delete_requests = [
-                    {
-                        "DeleteRequest": {
-                            "Key": {
-                                "PK": item["PK"],
-                                "SK": item["SK"],
-                            }
-                        }
-                    }
-                    for item in batch
-                ]
-
-                self._client.batch_write_item(
-                    RequestItems={self._outbox_table_name: delete_requests}
+        for offset in range(0, len(keys), 25):
+            pending = [
+                {"DeleteRequest": {"Key": {"PK": item["PK"], "SK": item["SK"]}}}
+                for item in keys[offset : offset + 25]
+            ]
+            while pending:
+                response = self._client.batch_write_item(
+                    RequestItems={self._outbox_table_name: pending}
                 )
-                deleted_count += len(batch)
-
-            log.info("Deleted old published events", count=deleted_count)
-            return deleted_count
-
-        except ClientError as e:
-            log.exception("Failed to delete old events")
-            raise StorageError(
-                message=f"Failed to delete old events: {e}",
-                storage_type="dynamodb",
-                operation="batch_delete",
-                resource=self._outbox_table_name,
-                cause=e,
-            ) from e
+                pending = response.get("UnprocessedItems", {}).get(self._outbox_table_name, [])
+        return len(keys)
 
     def update_metadata_with_outbox(
         self,
@@ -406,71 +307,39 @@ class DynamoDBOutboxRepository(OutboxRepository):
         outbox_event: OutboxEvent,
         error_message: str | None = None,
     ) -> None:
-        """
-        Update existing metadata and add outbox event atomically.
-
-        Used for status updates that also need to emit events.
-        """
-        log = logger.bind(
-            file_id=file_id,
-            status=status,
-            event_id=outbox_event.event_id,
+        """Legacy helper retained with the shared fixed metadata key."""
+        del timestamp
+        now = datetime.now(UTC).isoformat()
+        values: dict[str, Any] = {
+            _STATUS_VALUE: {"S": status},
+            ":updated": {"S": now},
+        }
+        update = "SET #status = :status, updatedAt = :updated"
+        if error_message:
+            update += ", errorMessage = :error"
+            values[":error"] = {"S": error_message}
+        self._client.transact_write_items(
+            TransactItems=[
+                {
+                    "Update": {
+                        "TableName": self._metadata_table_name,
+                        "Key": {
+                            "PK": {"S": f"FILE#{file_id}"},
+                            "SK": {"S": "METADATA"},
+                        },
+                        "UpdateExpression": update,
+                        "ExpressionAttributeNames": {_STATUS_NAME: "status"},
+                        "ExpressionAttributeValues": values,
+                    }
+                },
+                {
+                    "Put": {
+                        "TableName": self._outbox_table_name,
+                        "Item": outbox_event.to_dynamodb_item(),
+                        "ConditionExpression": (
+                            "attribute_not_exists(PK) AND attribute_not_exists(SK)"
+                        ),
+                    }
+                },
+            ]
         )
-
-        try:
-            now = datetime.now(UTC).isoformat()
-            outbox_item = outbox_event.to_dynamodb_item()
-
-            update_expr = (
-                f"SET {DDB_STATUS_NAME} = {DDB_STATUS_VALUE}, "
-                f"updatedAt = :updated, GSI1PK = {DDB_GSI1PK_VALUE}"
-            )
-            expr_names = {DDB_STATUS_NAME: "status"}
-            expr_values = {
-                DDB_STATUS_VALUE: {"S": status},
-                ":updated": {"S": now},
-                DDB_GSI1PK_VALUE: {"S": f"STATUS#{status}"},
-            }
-
-            if error_message:
-                update_expr += ", errorMessage = :error"
-                expr_values[":error"] = {"S": error_message}
-
-            if status == "COMPLETED":
-                update_expr += ", processedAt = :processed"
-                expr_values[":processed"] = {"S": now}
-
-            self._client.transact_write_items(
-                TransactItems=[
-                    {
-                        "Update": {
-                            "TableName": self._metadata_table_name,
-                            "Key": {
-                                "PK": {"S": f"FILE#{file_id}"},
-                                "SK": {"S": f"TS#{timestamp}"},
-                            },
-                            "UpdateExpression": update_expr,
-                            "ExpressionAttributeNames": expr_names,
-                            "ExpressionAttributeValues": expr_values,
-                        }
-                    },
-                    {
-                        "Put": {
-                            "TableName": self._outbox_table_name,
-                            "Item": outbox_item,
-                        }
-                    },
-                ]
-            )
-
-            log.info("Metadata updated with outbox event")
-
-        except ClientError as e:
-            log.exception("Failed to update metadata with outbox")
-            raise StorageError(
-                message=f"Failed to update with outbox: {e}",
-                storage_type="dynamodb",
-                operation="transact_write",
-                resource=f"{self._metadata_table_name}/{file_id}",
-                cause=e,
-            ) from e

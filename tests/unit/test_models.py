@@ -2,6 +2,12 @@ from datetime import UTC, datetime
 
 import pytest
 
+from processor.domain.events import (
+    EventType,
+    FailureDetails,
+    FileEvent,
+    ProcessingResultDetails,
+)
 from processor.domain.models import (
     AnalysisResult,
     FileContent,
@@ -155,7 +161,8 @@ class TestMetadataRecord:
         item = sample_record.to_dynamodb_item()
 
         assert item["PK"]["S"] == "FILE#file-123"
-        assert item["SK"]["S"] == "TS#2024-01-01T12:00:00Z"
+        assert item["SK"]["S"] == "METADATA"
+        assert item["entityType"]["S"] == "FILE_METADATA"
         assert item["correlationId"]["S"] == "corr-456"
         assert item["originalFilename"]["S"] == "test.pdf"
         assert item["fileSizeBytes"]["N"] == "1024"
@@ -201,7 +208,7 @@ class TestMetadataRecord:
     def test_from_dynamodb_item(self) -> None:
         item = {
             "PK": {"S": "FILE#file-abc"},
-            "SK": {"S": "TS#2024-06-15T10:30:00Z"},
+            "SK": {"S": "METADATA"},
             "correlationId": {"S": "corr-xyz"},
             "originalFilename": {"S": "document.pdf"},
             "fileSizeBytes": {"N": "2048"},
@@ -210,6 +217,7 @@ class TestMetadataRecord:
             "status": {"S": "COMPLETED"},
             "isEncrypted": {"BOOL": True},
             "retryCount": {"N": "2"},
+            "updatedAt": {"S": "2024-06-15T10:30:00Z"},
         }
 
         record = MetadataRecord.from_dynamodb_item(item)
@@ -264,32 +272,37 @@ class TestOutboxEvent:
         assert event.status == OutboxStatus.PENDING
         assert event.message_group_id == "file-123"
 
-    def test_file_failed_factory(self) -> None:
-        event = OutboxEvent.for_file_failed(
-            file_id="file-123",
-            correlation_id="corr-123",
-            error_code="SCAN_FAILED",
-            error_message="scanner unavailable",
+    def test_file_failed_factory(self, sample_file_event: FileEvent) -> None:
+        failure = sample_file_event.with_new_event_type(
+            EventType.PROCESSING_FAILED,
+            failure=FailureDetails(
+                code="SCAN_FAILED",
+                message="scanner unavailable",
+                failed_at=datetime.now(UTC),
+                retryable=True,
+            ),
         )
+        event = OutboxEvent.from_file_event(failure)
 
         assert event.event_type == OutboxEventType.PROCESSING_FAILED
-        assert event.payload["errorCode"] == "SCAN_FAILED"
-        assert event.payload["errorMessage"] == "scanner unavailable"
-        assert "failedAt" in event.payload
+        assert event.payload["failure"]["code"] == "SCAN_FAILED"
+        assert event.payload["failure"]["message"] == "scanner unavailable"
+        assert "failedAt" in event.payload["failure"]
 
-    def test_file_quarantined_factory(self) -> None:
-        event = OutboxEvent.for_file_quarantined(
-            file_id="file-123",
-            correlation_id="corr-123",
-            reason="malware",
-            findings=["signature-match"],
+    def test_file_quarantined_factory(self, sample_file_event: FileEvent) -> None:
+        completed = sample_file_event.with_new_event_type(
+            EventType.ANALYSIS_COMPLETED,
+            processing_result=ProcessingResultDetails(
+                is_safe=False,
+                findings=["signature-match"],
+                processed_at=datetime.now(UTC),
+            ),
         )
+        event = OutboxEvent.from_file_event(completed)
 
         assert event.event_type == OutboxEventType.ANALYSIS_COMPLETED
-        assert event.payload["isSafe"] is False
-        assert event.payload["reason"] == "malware"
-        assert event.payload["findings"] == ["signature-match"]
-        assert "quarantinedAt" in event.payload
+        assert event.payload["processingResult"]["isSafe"] is False
+        assert event.payload["processingResult"]["findings"] == ["signature-match"]
 
     def test_to_dynamodb_item_includes_optional_fields(self) -> None:
         event = OutboxEvent(
@@ -374,22 +387,19 @@ class TestOutboxEvent:
         assert event.last_error == "sns down"
         assert event.retry_count == 1
 
-    def test_sns_message_and_attributes(self) -> None:
-        event = OutboxEvent(
-            event_id="event-123",
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id="file-123",
-            aggregate_type="FileProcessing",
-            payload={"fileId": "file-123"},
-            created_at="2026-05-12T00:00:00+00:00",
+    def test_sns_message_and_attributes(self, sample_file_event: FileEvent) -> None:
+        completed = sample_file_event.with_new_event_type(
+            EventType.ANALYSIS_COMPLETED,
+            processing_result=ProcessingResultDetails(
+                is_safe=True,
+                findings=[],
+                processed_at=datetime.now(UTC),
+            ),
         )
+        event = OutboxEvent.from_file_event(completed)
 
-        assert event.to_sns_message() == {
-            "eventId": "event-123",
-            "eventType": "ANALYSIS_COMPLETED",
-            "aggregateId": "file-123",
-            "aggregateType": "FileProcessing",
-            "payload": {"fileId": "file-123"},
-            "timestamp": "2026-05-12T00:00:00+00:00",
-        }
-        assert event.to_sns_attributes()["aggregateId"]["StringValue"] == "file-123"
+        assert event.to_sns_message()["eventType"] == "ANALYSIS_COMPLETED"
+        assert event.to_sns_message()["eventId"] == event.event_id
+        assert event.to_sns_attributes()["aggregateId"]["StringValue"] == (
+            sample_file_event.file_id_str
+        )

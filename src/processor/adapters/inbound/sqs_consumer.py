@@ -267,7 +267,8 @@ class SQSConsumer(MessageConsumer):
         Reject a message.
 
         If requeue=True, changes visibility timeout to 0 (immediate retry).
-        If requeue=False, deletes the message (will go to DLQ if configured).
+        If requeue=False, leaves it unacknowledged so the queue redrive policy can
+        move it to the DLQ. Deleting a message would bypass the DLQ entirely.
         """
         if not receipt_handle:
             logger.warning("No receipt handle to reject")
@@ -282,11 +283,7 @@ class SQSConsumer(MessageConsumer):
                 )
                 logger.debug("Message requeued for retry")
             else:
-                self._client.delete_message(
-                    QueueUrl=self._queue_url,
-                    ReceiptHandle=receipt_handle,
-                )
-                logger.debug("Message rejected and deleted")
+                logger.warning("Message left unacknowledged for configured DLQ redrive")
 
         except ClientError as e:
             logger.error(

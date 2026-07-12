@@ -48,7 +48,7 @@ def create_valid_event_data() -> dict:
         "eventId": str(uuid4()),
         "correlationId": str(uuid4()),
         "timestamp": datetime.now(UTC).isoformat(),
-        "source": "fsamp-processor",
+        "source": "fsamp-gateway",
         "eventType": "FILE_UPLOADED",
         "fileMetadata": {
             "originalFilename": "test.pdf",
@@ -205,7 +205,7 @@ class TestFileEvent:
 
         assert event.schema_version == SCHEMA_VERSION
         assert event.event_type == EventType.FILE_UPLOADED
-        assert event.source == EventSource.PROCESSOR
+        assert event.source == EventSource.GATEWAY
         assert event.file_metadata.original_filename == "test.pdf"
 
     def test_event_immutable(self) -> None:
@@ -218,11 +218,21 @@ class TestFileEvent:
     def test_with_new_event_type(self) -> None:
         event_data = create_valid_event_data()
         original = FileEvent.model_validate(event_data)
-        updated = original.with_new_event_type(EventType.ANALYSIS_COMPLETED)
+        from processor.domain.events import ProcessingResultDetails
+
+        updated = original.with_new_event_type(
+            EventType.ANALYSIS_COMPLETED,
+            processing_result=ProcessingResultDetails(
+                is_safe=True,
+                findings=[],
+                processed_at=datetime.now(UTC),
+            ),
+        )
 
         assert original.event_type == EventType.FILE_UPLOADED
         assert updated.event_type == EventType.ANALYSIS_COMPLETED
-        assert original.event_id == updated.event_id  # Same ID
+        assert original.event_id != updated.event_id
+        assert updated.event_id.version == 5
         original_ts = (
             original.timestamp.replace(tzinfo=UTC)
             if original.timestamp.tzinfo is None
@@ -303,4 +313,4 @@ class TestSQSMessageWrapper:
 
         event = wrapper.get_file_event()
         assert event.schema_version == SCHEMA_VERSION
-        assert event.source == EventSource.PROCESSOR
+        assert event.source == EventSource.GATEWAY

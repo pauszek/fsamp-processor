@@ -68,6 +68,3 @@ Thumbs.db
 
 # AWS
 .aws/
-
-# Downloaded schema (fetched from fsamp-event-schema)
-schema/

@@ -17,6 +17,10 @@ Event-driven file processor for the FSAMP platform. The primary runtime is AWS L
 | Crypto posture | AWS KMS and OpenSSL FIPS provider in the us-west-2 deployment baseline |
 | Observability | Structured logs, Powertools metrics/tracing in Lambda |
 
+Events conform to the tracked `fsamp-event-schema` 1.2.0 snapshot. Processor
+metadata updates the gateway's canonical `FILE#<id>` / `METADATA` item, while
+result events are persisted transactionally in a 16-shard outbox before publish.
+
 ## Structure
 
 ```text
@@ -97,7 +101,7 @@ Use the infra compose stack for LocalStack instead of service-local compose file
 | `SNS_TOPIC_ARN` | File event topic ARN | required |
 | `S3_BUCKET_NAME` | File storage bucket | required |
 | `DYNAMODB_TABLE_NAME` | Metadata table | required |
-| `OUTBOX_TABLE_NAME` | Outbox table | optional |
+| `OUTBOX_TABLE_NAME` | Transactional outbox table | required outside local mode |
 | `PUBLISH_CLAIM_TTL_SECONDS` | Outbox publish claim lease | `300` |
 | `KMS_KEY_ID` | Customer-managed KMS key | required |
 
@@ -116,9 +120,14 @@ Integration tests expect LocalStack credentials and services to be available.
 
 Deployment is handled by `fsamp-infra/.github/workflows/deploy.yml`.
 
-- Merge to `main` in this repo runs CI and dispatches a dev deployment.
-- Manual promotion in `fsamp-infra` moves the same image tag through `dev -> staging -> prod`.
-- Rollback in `fsamp-infra` redeploys a previous immutable image tag without rebuilding.
+- Merge to `main` publishes a signed, scanned GHCR digest; optional dev dispatches
+  pass that immutable digest to `fsamp-infra`.
+- Promotion copies the verified manifest to ECR without rebuilding or re-signing.
+- Rollback redeploys the previously recorded immutable manifest.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 ## Related Repositories
 

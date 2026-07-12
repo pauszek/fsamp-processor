@@ -18,12 +18,11 @@ Implements Outbox Pattern for reliable event publishing.
 from __future__ import annotations
 
 import json
-import sys
 import time
 from typing import Any, cast
 
 from aws_lambda_powertools import Logger, Metrics, Tracer
-from aws_lambda_powertools.metrics import MetricUnit
+from aws_lambda_powertools.metrics import MetricUnit, single_metric
 from aws_lambda_powertools.utilities.batch import (
     BatchProcessor,
     EventType,
@@ -31,6 +30,7 @@ from aws_lambda_powertools.utilities.batch import (
 )
 from aws_lambda_powertools.utilities.data_classes.sqs_event import SQSRecord
 from aws_lambda_powertools.utilities.typing import LambdaContext
+from pydantic import ValidationError
 
 from processor.adapters.outbound import (
     DynamoDBMetadataRepository,
@@ -42,7 +42,11 @@ from processor.adapters.outbound import (
 from processor.application import FileProcessorService
 from processor.config import Settings, get_settings
 from processor.domain.events import FileEvent
-from processor.domain.exceptions import NonRetryableError, ProcessingError
+from processor.domain.exceptions import (
+    EventValidationError,
+    NonRetryableError,
+    ProcessingError,
+)
 from processor.infrastructure import AWSClientFactory, enforce_fips
 
 logger = Logger(service="fsamp-processor")
@@ -69,6 +73,8 @@ def get_file_processor() -> FileProcessorService:
     logger.info("Initializing FileProcessorService (cold start)")
 
     _settings = get_settings()
+
+    _settings.validate_processor_runtime()
 
     enforce_fips(_settings.should_require_fips)
 
@@ -104,6 +110,7 @@ def get_file_processor() -> FileProcessorService:
             dynamodb_client=aws_factory.get_dynamodb_client(),
             metadata_table_name=_settings.dynamodb_table_name,
             outbox_table_name=_settings.outbox_table_name,
+            retention_seconds=_settings.outbox_retention_seconds,
         )
         logger.info("Outbox Pattern enabled", outbox_table=_settings.outbox_table_name)
 
@@ -115,6 +122,9 @@ def get_file_processor() -> FileProcessorService:
         outbox_repo=outbox_repo,
         max_file_size_bytes=_settings.max_file_size_bytes,
         use_outbox_pattern=outbox_repo is not None,
+        allowed_bucket_name=_settings.s3_bucket_name,
+        allowed_region=_settings.aws_region,
+        quarantine_prefix=_settings.quarantine_prefix,
     )
 
     logger.info(
@@ -159,7 +169,7 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         logger.append_keys(
             event_id=str(file_event.event_id),
             file_id=file_event.file_id_str,
-            correlation_id=file_event.correlation_id,
+            correlation_id=file_event.correlation_id_str,
             event_type=file_event.event_type.value,
         )
         tracer.put_annotation("event_id", str(file_event.event_id))
@@ -190,10 +200,14 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         )
 
         mime_type = file_event.file_metadata.mime_type or "unknown"
-        metrics.add_dimension(
-            name="MimeType", value=mime_type.split("/")[0] if "/" in mime_type else mime_type
-        )
-        metrics.add_metric(name="FilesByType", unit=MetricUnit.Count, value=1)
+        mime_family = mime_type.split("/")[0] if "/" in mime_type else mime_type
+        with single_metric(
+            name="FilesByType",
+            unit=MetricUnit.Count,
+            value=1,
+            namespace="FSAMP/Processor",
+        ) as metric:
+            metric.add_dimension(name="MimeType", value=mime_family)
 
         if result.metadata.get("is_safe") is True:
             metrics.add_metric(name="SafeFiles", unit=MetricUnit.Count, value=1)
@@ -228,12 +242,15 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
             name="FailedProcessingDuration", unit=MetricUnit.Milliseconds, value=total_duration_ms
         )
 
-        return {
-            "messageId": message_id,
-            "status": "skipped",
-            "error": str(e),
-            "retryable": False,
-        }
+        raise
+
+    except (json.JSONDecodeError, ValidationError) as e:
+        metrics.add_metric(name="InvalidEvents", unit=MetricUnit.Count, value=1)
+        raise EventValidationError(
+            message="SQS payload is not a valid canonical FSAMP event",
+            event_id=message_id,
+            cause=e,
+        ) from e
 
     except ProcessingError as e:
         logger.error("Processing error (retryable)", error=str(e), retryable=e.retryable)
@@ -248,6 +265,9 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
         metrics.add_metric(name="FilesProcessedFailed", unit=MetricUnit.Count, value=1)
         metrics.add_metric(name="UnexpectedErrors", unit=MetricUnit.Count, value=1)
         raise
+
+    finally:
+        logger.remove_keys(["message_id", "event_id", "file_id", "correlation_id", "event_type"])
 
 
 @logger.inject_lambda_context(log_event=False)
@@ -286,61 +306,3 @@ def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, A
     metrics.add_metric(name="BatchSize", unit=MetricUnit.Count, value=len(records))
 
     return cast(dict[str, Any], processor.response())
-
-
-if __name__ == "__main__":
-    sample_event = {
-        "Records": [
-            {
-                "messageId": "test-message-id",
-                "receiptHandle": "test-receipt",
-                "body": json.dumps(
-                    {
-                        "schema_version": "1.1.2",
-                        "file_id": "550e8400-e29b-41d4-a716-446655440000",
-                        "event_id": "550e8400-e29b-41d4-a716-446655440001",
-                        "event_type": "FILE_UPLOADED",
-                        "correlation_id": "550e8400-e29b-41d4-a716-446655440002",
-                        "timestamp": "2024-01-01T00:00:00Z",
-                        "source": "fsamp-gateway",
-                        "file_metadata": {
-                            "file_id": "test-file-123",
-                            "original_filename": "test.pdf",
-                            "content_type": "application/pdf",
-                            "file_size_bytes": 1024,
-                            "checksum_sha256": "abc123",
-                        },
-                        "storage_location": {
-                            "bucket_name": "test-bucket",
-                            "object_key": "uploads/test.pdf",
-                            "region": "us-west-2",
-                        },
-                        "security_context": {
-                            "encryption_algorithm": "AES-256-GCM",
-                            "kms_key_id": "alias/test-key",
-                        },
-                    }
-                ),
-                "attributes": {},
-                "messageAttributes": {},
-                "md5OfBody": "test",
-                "eventSource": "aws:sqs",
-                "eventSourceARN": "arn:aws:sqs:us-west-2:123456789:test-queue",
-                "awsRegion": "us-west-2",
-            }
-        ]
-    }
-
-    class MockContext:
-        function_name = "test-function"
-        memory_limit_in_mb = 512
-        invoked_function_arn = "arn:aws:lambda:us-west-2:123456789:function:test"
-        aws_request_id = "test-request-id"
-
-        def get_remaining_time_in_millis(self) -> int:
-            return 300000
-
-    print("Testing Lambda handler locally...")
-    result = lambda_handler(sample_event, MockContext())
-    print(f"Result: {json.dumps(result, indent=2)}")
-    sys.exit(0)

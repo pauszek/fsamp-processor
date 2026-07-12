@@ -99,13 +99,14 @@ class TestSNSEventPublisherPublishBatch:
     def test_publish_batch_partial_failure(self, sample_file_event: FileEvent) -> None:
         client = MagicMock()
 
+        error = ClientError(
+            {"Error": {"Code": "ValidationError"}},
+            "Publish",
+        )
         client.publish.side_effect = [
             {"MessageId": "msg-1"},
             {"MessageId": "msg-2"},
-            ClientError(
-                {"Error": {"Code": "InternalError"}},
-                "Publish",
-            ),
+            error,
         ]
 
         publisher = SNSEventPublisher(
@@ -114,9 +115,9 @@ class TestSNSEventPublisherPublishBatch:
         )
 
         events = [sample_file_event, sample_file_event, sample_file_event]
-        message_ids = publisher.publish_batch(events)
-
-        assert len(message_ids) == 2
+        with pytest.raises(MessageError):
+            publisher.publish_batch(events)
+        assert client.publish.call_count == 3
 
     def test_publish_batch_empty(self, publisher: SNSEventPublisher) -> None:
         message_ids = publisher.publish_batch([])
