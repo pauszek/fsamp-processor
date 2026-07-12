@@ -45,6 +45,10 @@ _dynamodb_client: DynamoDBClient | None = None
 _aws_factory: AWSClientFactory | None = None
 _settings: Settings | None = None
 
+_STATUS_NAME = "#status"
+_PUBLISHING_VALUE = ":publishing"
+_OWNER_VALUE = ":token"
+
 
 class ClaimUnavailableError(RuntimeError):
     """The row is not terminal, but another worker currently owns the lease."""
@@ -193,15 +197,15 @@ def claim_event_for_publish(outbox_event: OutboxEvent) -> str | None:
                 "OR (#status = :publishing AND publisherClaimExpiresAt < :now)) "
                 "AND (attribute_not_exists(retryCount) OR retryCount < :maxRetries)"
             ),
-            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeNames={_STATUS_NAME: "status"},
             ExpressionAttributeValues={
                 ":pending": {"S": OutboxStatus.PENDING.value},
                 ":failed": {"S": OutboxStatus.FAILED.value},
-                ":publishing": {"S": OutboxStatus.PUBLISHING.value},
+                _PUBLISHING_VALUE: {"S": OutboxStatus.PUBLISHING.value},
                 ":started": {"S": now.isoformat()},
                 ":expires": {"N": str(expires)},
                 ":now": {"N": str(now_epoch)},
-                ":token": {"S": token},
+                _OWNER_VALUE: {"S": token},
                 ":maxRetries": {"N": str(get_max_retry_count())},
                 ":gsi": {"S": f"STATUS#PUBLISHING#{outbox_event.outbox_shard}"},
             },
@@ -262,12 +266,12 @@ def mark_event_published(outbox_event: OutboxEvent, claim_token: str) -> None:
                 "REMOVE publishingStartedAt, publisherClaimExpiresAt, publisherClaimToken"
             ),
             ConditionExpression="#status = :publishing AND publisherClaimToken = :token",
-            ExpressionAttributeNames={"#status": "status", "#ttl": "ttl"},
+            ExpressionAttributeNames={_STATUS_NAME: "status", "#ttl": "ttl"},
             ExpressionAttributeValues={
                 ":published": {"S": OutboxStatus.PUBLISHED.value},
-                ":publishing": {"S": OutboxStatus.PUBLISHING.value},
+                _PUBLISHING_VALUE: {"S": OutboxStatus.PUBLISHING.value},
                 ":publishedAt": {"S": now.isoformat()},
-                ":token": {"S": claim_token},
+                _OWNER_VALUE: {"S": claim_token},
                 ":gsi": {"S": f"STATUS#PUBLISHED#{outbox_event.outbox_shard}"},
                 ":ttl": {"N": str(int(now.timestamp()) + get_retention_seconds())},
             },
@@ -298,11 +302,11 @@ def mark_event_failed(
                 "REMOVE publishingStartedAt, publisherClaimExpiresAt, publisherClaimToken"
             ),
             ConditionExpression="#status = :publishing AND publisherClaimToken = :token",
-            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeNames={_STATUS_NAME: "status"},
             ExpressionAttributeValues={
                 ":failed": {"S": OutboxStatus.FAILED.value},
-                ":publishing": {"S": OutboxStatus.PUBLISHING.value},
-                ":token": {"S": claim_token},
+                _PUBLISHING_VALUE: {"S": OutboxStatus.PUBLISHING.value},
+                _OWNER_VALUE: {"S": claim_token},
                 ":error": {"S": error[:2000]},
                 ":zero": {"N": "0"},
                 ":inc": {"N": "1"},

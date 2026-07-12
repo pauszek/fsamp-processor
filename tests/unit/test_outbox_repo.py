@@ -198,3 +198,53 @@ def test_mark_failed_never_downgrades_published(
     assert request["ExpressionAttributeValues"][":gsi"] == {
         "S": f"STATUS#FAILED#{outbox.outbox_shard}"
     }
+
+
+def test_delete_old_published_follows_pages_and_retries_unprocessed_writes(
+    repo: DynamoDBOutboxRepository,
+    client: MagicMock,
+) -> None:
+    item = {
+        "PK": {"S": "OUTBOX#FileProcessing#file-1"},
+        "SK": {"S": "EVENT#event-1"},
+    }
+    last_key = {"PK": {"S": "next"}, "SK": {"S": "next"}}
+    client.query.side_effect = [
+        {"Items": [item], "LastEvaluatedKey": last_key},
+        {"Items": []},
+        *({"Items": []} for _ in range(15)),
+    ]
+    delete_request = {"DeleteRequest": {"Key": item}}
+    client.batch_write_item.side_effect = [
+        {"UnprocessedItems": {"outbox": [delete_request]}},
+        {"UnprocessedItems": {}},
+    ]
+
+    assert repo.delete_old_published(older_than_hours=48) == 1
+    assert client.query.call_args_list[1].kwargs["ExclusiveStartKey"] == last_key
+    assert client.batch_write_item.call_count == 2
+
+
+@pytest.mark.parametrize("error_message", [None, "scan failed"])
+def test_legacy_metadata_update_uses_current_state_key_and_outbox_condition(
+    repo: DynamoDBOutboxRepository,
+    client: MagicMock,
+    outbox: OutboxEvent,
+    error_message: str | None,
+) -> None:
+    repo.update_metadata_with_outbox(
+        outbox.aggregate_id,
+        "ignored-timestamp",
+        "FAILED",
+        outbox,
+        error_message,
+    )
+
+    transaction = client.transact_write_items.call_args.kwargs["TransactItems"]
+    metadata_update = transaction[0]["Update"]
+    event_put = transaction[1]["Put"]
+    assert metadata_update["Key"]["SK"] == {"S": "METADATA"}
+    assert (":error" in metadata_update["ExpressionAttributeValues"]) is (error_message is not None)
+    assert event_put["ConditionExpression"] == (
+        "attribute_not_exists(PK) AND attribute_not_exists(SK)"
+    )

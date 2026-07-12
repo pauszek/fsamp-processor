@@ -24,6 +24,9 @@ from processor.ports.outbound import OutboxRepository
 
 logger = structlog.get_logger(__name__)
 
+_STATUS_NAME = "#status"
+_STATUS_VALUE = ":status"
+
 
 class DynamoDBOutboxRepository(OutboxRepository):
     """Atomically update current metadata and insert one canonical event."""
@@ -147,7 +150,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
                     "IndexName": "GSI1",
                     "KeyConditionExpression": "GSI1PK = :status",
                     "ExpressionAttributeValues": {
-                        ":status": {"S": f"STATUS#{status.value}#{shard}"}
+                        _STATUS_VALUE: {"S": f"STATUS#{status.value}#{shard}"}
                     },
                     "ScanIndexForward": True,
                     "Limit": per_shard_limit - shard_count,
@@ -201,7 +204,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
                 UpdateExpression=(
                     "SET #status = :published, publishedAt = :now, " "GSI1PK = :gsi, #ttl = :ttl"
                 ),
-                ExpressionAttributeNames={"#status": "status", "#ttl": "ttl"},
+                ExpressionAttributeNames={_STATUS_NAME: "status", "#ttl": "ttl"},
                 ExpressionAttributeValues={
                     ":published": {"S": OutboxStatus.PUBLISHED.value},
                     ":now": {"S": now.isoformat()},
@@ -237,7 +240,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
                     "SET #status = :failed, lastError = :error, "
                     "retryCount = if_not_exists(retryCount, :zero) + :inc, GSI1PK = :gsi"
                 ),
-                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeNames={_STATUS_NAME: "status"},
                 ExpressionAttributeValues={
                     ":failed": {"S": OutboxStatus.FAILED.value},
                     ":published": {"S": OutboxStatus.PUBLISHED.value},
@@ -271,7 +274,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
                     "IndexName": "GSI1",
                     "KeyConditionExpression": "GSI1PK = :status AND GSI1SK < :cutoff",
                     "ExpressionAttributeValues": {
-                        ":status": {"S": f"STATUS#PUBLISHED#{shard}"},
+                        _STATUS_VALUE: {"S": f"STATUS#PUBLISHED#{shard}"},
                         ":cutoff": {"S": cutoff},
                     },
                     "ProjectionExpression": "PK, SK",
@@ -308,7 +311,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
         del timestamp
         now = datetime.now(UTC).isoformat()
         values: dict[str, Any] = {
-            ":status": {"S": status},
+            _STATUS_VALUE: {"S": status},
             ":updated": {"S": now},
         }
         update = "SET #status = :status, updatedAt = :updated"
@@ -325,7 +328,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
                             "SK": {"S": "METADATA"},
                         },
                         "UpdateExpression": update,
-                        "ExpressionAttributeNames": {"#status": "status"},
+                        "ExpressionAttributeNames": {_STATUS_NAME: "status"},
                         "ExpressionAttributeValues": values,
                     }
                 },

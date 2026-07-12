@@ -279,6 +279,85 @@ def test_retry_query_last_shard_cannot_be_starved(
     assert dynamodb.query.call_count == 16
 
 
+def test_retry_handler_deduplicates_and_publishes_event(
+    sample_file_event: FileEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = canonical_outbox(sample_file_event).to_dynamodb_item()
+    query = MagicMock(side_effect=[[item, item], [], []])
+    publish = MagicMock()
+    mark_published = MagicMock()
+    monkeypatch.setattr(publisher, "_query_retryable", query)
+    monkeypatch.setattr(publisher, "claim_event_for_publish", lambda _: "claim-123")
+    monkeypatch.setattr(publisher, "publish_to_sns", publish)
+    monkeypatch.setattr(publisher, "mark_event_published", mark_published)
+
+    response = publisher.retry_handler({}, MagicMock())
+
+    assert response["body"] == {
+        "success_count": 1,
+        "failure_count": 0,
+        "total_processed": 1,
+    }
+    publish.assert_called_once()
+    mark_published.assert_called_once()
+
+
+def test_retry_handler_records_publish_and_fencing_failures(
+    sample_file_event: FileEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = canonical_outbox(sample_file_event).to_dynamodb_item()
+    monkeypatch.setattr(
+        publisher,
+        "_query_retryable",
+        MagicMock(side_effect=[[], [item], []]),
+    )
+    monkeypatch.setattr(publisher, "claim_event_for_publish", lambda _: "claim-456")
+    monkeypatch.setattr(
+        publisher,
+        "publish_to_sns",
+        MagicMock(side_effect=RuntimeError("SNS unavailable")),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "mark_event_failed",
+        MagicMock(side_effect=publisher.ClaimUnavailableError("lease lost")),
+    )
+
+    response = publisher.retry_handler({}, MagicMock())
+
+    assert response["body"] == {
+        "success_count": 0,
+        "failure_count": 1,
+        "total_processed": 1,
+    }
+
+
+def test_retry_handler_skips_terminal_event(
+    sample_file_event: FileEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = canonical_outbox(sample_file_event).to_dynamodb_item()
+    monkeypatch.setattr(
+        publisher,
+        "_query_retryable",
+        MagicMock(side_effect=[[], [], [item]]),
+    )
+    monkeypatch.setattr(publisher, "claim_event_for_publish", lambda _: None)
+    publish = MagicMock()
+    monkeypatch.setattr(publisher, "publish_to_sns", publish)
+
+    response = publisher.retry_handler({}, MagicMock())
+
+    assert response["body"] == {
+        "success_count": 0,
+        "failure_count": 0,
+        "total_processed": 1,
+    }
+    publish.assert_not_called()
+
+
 @pytest.mark.parametrize("value", [0, 101])
 def test_retry_count_configuration_is_validated(
     value: int,
