@@ -21,7 +21,12 @@ class FileStorage(ABC):
     """
 
     @abstractmethod
-    def download(self, bucket_name: str, object_key: str) -> FileContent:
+    def download(
+        self,
+        bucket_name: str,
+        object_key: str,
+        max_bytes: int | None = None,
+    ) -> FileContent:
         """
         Download a file from storage.
 
@@ -35,6 +40,17 @@ class FileStorage(ABC):
         Raises:
             StorageError: If download fails.
         """
+        ...
+
+    @abstractmethod
+    def copy(
+        self,
+        source_bucket: str,
+        source_key: str,
+        dest_bucket: str,
+        dest_key: str,
+    ) -> str:
+        """Copy an object using the storage adapter's required encryption policy."""
         ...
 
     @abstractmethod
@@ -456,6 +472,7 @@ class OutboxRepository(ABC):
         self,
         event_id: str,
         aggregate_type: str = "FileProcessing",
+        aggregate_id: str | None = None,
     ) -> None:
         """
         Mark an outbox event as published.
@@ -477,6 +494,7 @@ class OutboxRepository(ABC):
         event_id: str,
         error: str,
         aggregate_type: str = "FileProcessing",
+        aggregate_id: str | None = None,
     ) -> None:
         """
         Mark an outbox event as failed.

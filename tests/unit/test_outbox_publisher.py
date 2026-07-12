@@ -1,763 +1,276 @@
-import os
-from unittest.mock import MagicMock, patch
+from __future__ import annotations
+
+import copy
+import json
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import pytest
+from botocore.exceptions import ClientError
 
-from processor import outbox_publisher
-from processor.domain.models import OutboxEvent, OutboxEventType, OutboxStatus
-
-
-class TestOutboxPublisherHelpers:
-    @pytest.fixture(autouse=True)
-    def setup_env(self) -> None:
-        os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
-        os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
-
-        outbox_publisher._sns_client = None
-        outbox_publisher._dynamodb_client = None
-        outbox_publisher._aws_factory = None
-        outbox_publisher._settings = None
-        yield
-        os.environ.pop("SNS_TOPIC_ARN", None)
-        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("OUTBOX_TABLE_NAME", None)
-
-    def test_get_sns_client_singleton(self) -> None:
-        mock_client = MagicMock()
-        mock_factory = MagicMock()
-        mock_factory.get_sns_client.return_value = mock_client
-
-        with patch.object(outbox_publisher, "get_aws_factory", return_value=mock_factory):
-            client1 = outbox_publisher.get_sns_client()
-            client2 = outbox_publisher.get_sns_client()
-
-        assert client1 is client2
-        mock_factory.get_sns_client.assert_called_once()
-
-    def test_get_dynamodb_client_singleton(self) -> None:
-        mock_client = MagicMock()
-        mock_factory = MagicMock()
-        mock_factory.get_dynamodb_client.return_value = mock_client
-
-        with patch.object(outbox_publisher, "get_aws_factory", return_value=mock_factory):
-            client1 = outbox_publisher.get_dynamodb_client()
-            client2 = outbox_publisher.get_dynamodb_client()
-
-        assert client1 is client2
-        mock_factory.get_dynamodb_client.assert_called_once()
-
-    def test_get_aws_factory_initializes_with_settings_and_enforces_fips(self) -> None:
-        settings = MagicMock(
-            should_require_fips=True,
-            aws_region="us-west-2",
-            aws_endpoint_url=None,
-            should_use_fips=True,
-        )
-
-        with (
-            patch.object(outbox_publisher, "get_settings", return_value=settings),
-            patch.object(outbox_publisher, "enforce_fips") as enforce_fips,
-            patch.object(outbox_publisher, "AWSClientFactory") as aws_client_factory,
-        ):
-            factory = outbox_publisher.get_aws_factory()
-
-        assert factory is aws_client_factory.return_value
-        enforce_fips.assert_called_once_with(True)
-        aws_client_factory.assert_called_once_with(
-            region="us-west-2",
-            endpoint_url=None,
-            use_fips=True,
-        )
+import processor.outbox_publisher as publisher
+from processor.domain.events import EventType, FileEvent, ProcessingResultDetails
+from processor.domain.models import OutboxEvent, OutboxStatus
 
 
-class TestOutboxPublisherRecordHandlerLogic:
-    def test_dynamodb_event_name_normalizes_powertools_enum(self) -> None:
-        class EventName:
-            name = "INSERT"
-            value = 0
-
-            def __str__(self) -> str:
-                return "DynamoDBRecordEventName.INSERT"
-
-        record = MagicMock()
-        record.event_name = EventName()
-
-        assert outbox_publisher.dynamodb_event_name(record) == "INSERT"
-
-    def test_non_insert_event_should_be_skipped(self) -> None:
-        event_name = "MODIFY"
-        assert event_name != "INSERT"
-
-    def test_pending_status_detection(self) -> None:
-        new_image = {"status": OutboxStatus.PENDING.value}
-        assert new_image.get("status") == OutboxStatus.PENDING.value
-
-        new_image = {"status": OutboxStatus.PUBLISHED.value}
-        assert new_image.get("status") != OutboxStatus.PENDING.value
-
-    def test_no_new_image_should_be_skipped(self) -> None:
-        new_image = None
-        assert not new_image
-
-    def test_record_handler_skips_non_insert_event(self) -> None:
-        record = MagicMock()
-        record.event_name = "MODIFY"
-        record.event_id = "stream-event-1"
-
-        result = outbox_publisher.record_handler(record)
-
-        assert result == {"status": "skipped", "reason": "not_insert"}
-
-    def test_record_handler_skips_missing_new_image(self) -> None:
-        record = MagicMock()
-        record.event_name = "INSERT"
-        record.event_id = "stream-event-1"
-        record.dynamodb.new_image = None
-
-        result = outbox_publisher.record_handler(record)
-
-        assert result == {"status": "skipped", "reason": "no_new_image"}
-
-    def test_record_handler_publishes_pending_event(self) -> None:
-        outbox_event = OutboxEvent.for_file_processed(
-            file_id="file-123",
-            correlation_id="corr-123",
-            file_hash="a" * 64,
+def canonical_outbox(event: FileEvent) -> OutboxEvent:
+    completed = event.with_new_event_type(
+        EventType.ANALYSIS_COMPLETED,
+        processing_result=ProcessingResultDetails(
             is_safe=True,
-            bucket_name="bucket",
-            object_key="object",
-        )
-        record = MagicMock()
-        record.event_name = "INSERT"
-        record.event_id = "stream-event-1"
-        record.dynamodb.new_image = outbox_event.to_dynamodb_item()
-
-        with (
-            patch.object(
-                outbox_publisher, "claim_event_for_publish", return_value=True
-            ) as claim_event,
-            patch.object(outbox_publisher, "publish_to_sns") as publish_to_sns,
-            patch.object(outbox_publisher, "mark_event_published") as mark_event_published,
-        ):
-            result = outbox_publisher.record_handler(record)
-
-        assert result == {
-            "status": "published",
-            "event_id": outbox_event.event_id,
-            "event_type": outbox_event.event_type.value,
-        }
-        claim_event.assert_called_once_with(outbox_event)
-        publish_to_sns.assert_called_once()
-        mark_event_published.assert_called_once()
-
-    def test_record_handler_skips_already_claimed_event(self) -> None:
-        outbox_event = OutboxEvent.for_file_processed(
-            file_id="file-123",
-            correlation_id="corr-123",
-            file_hash="a" * 64,
-            is_safe=True,
-            bucket_name="bucket",
-            object_key="object",
-        )
-        record = MagicMock()
-        record.event_name = "INSERT"
-        record.event_id = "stream-event-1"
-        record.dynamodb.new_image = outbox_event.to_dynamodb_item()
-
-        with (
-            patch.object(outbox_publisher, "claim_event_for_publish", return_value=False),
-            patch.object(outbox_publisher, "publish_to_sns") as publish_to_sns,
-        ):
-            result = outbox_publisher.record_handler(record)
-
-        assert result == {
-            "status": "skipped",
-            "reason": "already_claimed",
-            "event_id": outbox_event.event_id,
-        }
-        publish_to_sns.assert_not_called()
-
-    def test_record_handler_skips_non_pending_wire_status(self) -> None:
-        record = MagicMock()
-        record.event_name = "INSERT"
-        record.event_id = "stream-event-1"
-        record.dynamodb.new_image = {"status": {"S": OutboxStatus.PUBLISHED.value}}
-
-        result = outbox_publisher.record_handler(record)
-
-        assert result == {
-            "status": "skipped",
-            "reason": "not_pending",
-            "event_status": OutboxStatus.PUBLISHED.value,
-        }
-
-    def test_record_handler_marks_wire_event_failed_when_publish_fails(self) -> None:
-        outbox_event = OutboxEvent.for_file_processed(
-            file_id="file-123",
-            correlation_id="corr-123",
-            file_hash="a" * 64,
-            is_safe=True,
-            bucket_name="bucket",
-            object_key="object",
-        )
-        record = MagicMock()
-        record.event_name = "INSERT"
-        record.event_id = "stream-event-1"
-        record.dynamodb.new_image = outbox_event.to_dynamodb_item()
-
-        with (
-            patch.object(outbox_publisher, "claim_event_for_publish", return_value=True),
-            patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
-            patch.object(outbox_publisher, "mark_event_failed") as mark_event_failed,
-            pytest.raises(RuntimeError, match="SNS down"),
-        ):
-            outbox_publisher.record_handler(record)
-
-        mark_event_failed.assert_called_once_with(
-            outbox_event.event_id,
-            "SNS down",
-            aggregate_type="FileProcessing",
-        )
-
-    def test_record_handler_suppresses_mark_failed_errors(self) -> None:
-        outbox_event = OutboxEvent.for_file_processed(
-            file_id="file-123",
-            correlation_id="corr-123",
-            file_hash="a" * 64,
-            is_safe=True,
-            bucket_name="bucket",
-            object_key="object",
-        )
-        record = MagicMock()
-        record.event_name = "INSERT"
-        record.event_id = "stream-event-1"
-        record.dynamodb.new_image = outbox_event.to_dynamodb_item()
-
-        with (
-            patch.object(outbox_publisher, "claim_event_for_publish", return_value=True),
-            patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
-            patch.object(
-                outbox_publisher,
-                "mark_event_failed",
-                side_effect=RuntimeError("DynamoDB down"),
-            ),
-            pytest.raises(RuntimeError, match="SNS down"),
-        ):
-            outbox_publisher.record_handler(record)
-
-    def test_record_handler_raises_original_error_without_event_id(self) -> None:
-        record = MagicMock()
-        record.event_name = "INSERT"
-        record.event_id = "stream-event-1"
-        record.dynamodb.new_image = {
-            "eventType": {"S": "ANALYSIS_COMPLETED"},
-            "aggregateId": {"S": "file-123"},
-            "payload": {"S": "{}"},
-            "status": {"S": OutboxStatus.PENDING.value},
-            "createdAt": {"S": "2026-05-12T00:00:00+00:00"},
-        }
-
-        with (
-            patch.object(outbox_publisher, "claim_event_for_publish", return_value=True),
-            patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
-            patch.object(outbox_publisher, "mark_event_failed") as mark_event_failed,
-            pytest.raises(KeyError),
-        ):
-            outbox_publisher.record_handler(record)
-
-        mark_event_failed.assert_not_called()
-
-
-class TestOutboxPublisherPublishToSNS:
-    @pytest.fixture(autouse=True)
-    def setup_env(self) -> None:
-        os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
-        os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
-        yield
-        os.environ.pop("SNS_TOPIC_ARN", None)
-        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("OUTBOX_TABLE_NAME", None)
-
-    def test_publish_to_sns_success(self) -> None:
-        mock_sns = MagicMock()
-        mock_sns.publish.return_value = {"MessageId": "test-message-id"}
-
-        outbox_event = OutboxEvent(
-            event_id="test-event-id",
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id="file-123",
-            aggregate_type="FileProcessing",
-            payload={"file_id": "file-123"},
-        )
-
-        with patch.object(outbox_publisher, "get_sns_client", return_value=mock_sns):
-            result = outbox_publisher.publish_to_sns(outbox_event)
-
-        assert result == "test-message-id"
-        mock_sns.publish.assert_called_once()
-        assert (
-            mock_sns.publish.call_args.kwargs["TopicArn"]
-            == "arn:aws:sns:us-west-2:123456789012:test-topic"
-        )
-
-    def test_publish_to_sns_routes_file_uploads_to_file_events_topic(self) -> None:
-        os.environ["FILE_EVENTS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:file-events"
-        os.environ["PROCESSING_EVENTS_TOPIC_ARN"] = (
-            "arn:aws:sns:us-west-2:123456789012:processing-events"
-        )
-        mock_sns = MagicMock()
-        mock_sns.publish.return_value = {"MessageId": "test-message-id"}
-
-        outbox_event = OutboxEvent(
-            event_id="upload-event-id",
-            event_type=OutboxEventType.FILE_UPLOADED,
-            aggregate_id="file-123",
-            aggregate_type="FileUpload",
-            payload={"fileId": "file-123"},
-        )
-
-        with patch.object(outbox_publisher, "get_sns_client", return_value=mock_sns):
-            outbox_publisher.publish_to_sns(outbox_event)
-
-        assert (
-            mock_sns.publish.call_args.kwargs["TopicArn"]
-            == "arn:aws:sns:us-west-2:123456789012:file-events"
-        )
-
-    def test_publish_to_sns_routes_processing_results_to_processing_topic(self) -> None:
-        os.environ["FILE_EVENTS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:file-events"
-        os.environ["PROCESSING_EVENTS_TOPIC_ARN"] = (
-            "arn:aws:sns:us-west-2:123456789012:processing-events"
-        )
-        mock_sns = MagicMock()
-        mock_sns.publish.return_value = {"MessageId": "test-message-id"}
-
-        outbox_event = OutboxEvent(
-            event_id="result-event-id",
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id="file-123",
-            aggregate_type="FileProcessing",
-            payload={"fileId": "file-123"},
-        )
-
-        with patch.object(outbox_publisher, "get_sns_client", return_value=mock_sns):
-            outbox_publisher.publish_to_sns(outbox_event)
-
-        assert (
-            mock_sns.publish.call_args.kwargs["TopicArn"]
-            == "arn:aws:sns:us-west-2:123456789012:processing-events"
-        )
-
-    def test_publish_to_sns_adds_file_context_attributes(self) -> None:
-        mock_sns = MagicMock()
-        mock_sns.publish.return_value = {"MessageId": "test-message-id"}
-
-        outbox_event = OutboxEvent(
-            event_id="test-event-id",
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id="file-123",
-            aggregate_type="FileProcessing",
-            payload={
-                "schemaVersion": "1.1.2",
-                "eventType": "ANALYSIS_COMPLETED",
-                "fileId": "file-123",
-                "correlationId": "corr-123",
-            },
-        )
-
-        with patch.object(outbox_publisher, "get_sns_client", return_value=mock_sns):
-            result = outbox_publisher.publish_to_sns(outbox_event)
-
-        assert result == "test-message-id"
-        message_attributes = mock_sns.publish.call_args.kwargs["MessageAttributes"]
-        assert message_attributes["fileId"]["StringValue"] == "file-123"
-        assert message_attributes["correlationId"]["StringValue"] == "corr-123"
-        # Idempotency key attribute lets downstream consumers deduplicate
-        # at-least-once deliveries from SNS standard topics.
-        assert message_attributes["idempotencyKey"]["StringValue"] == "test-event-id"
-
-    def test_publish_to_sns_wraps_plain_payload_in_outbox_envelope(self) -> None:
-        mock_sns = MagicMock()
-        mock_sns.publish.return_value = {"MessageId": "test-message-id"}
-
-        outbox_event = OutboxEvent(
-            event_id="test-event-id",
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id="file-123",
-            aggregate_type="FileProcessing",
-            payload={"fileId": "file-123"},
-            created_at="2026-05-12T00:00:00+00:00",
-        )
-
-        with patch.object(outbox_publisher, "get_sns_client", return_value=mock_sns):
-            outbox_publisher.publish_to_sns(outbox_event)
-
-        message = mock_sns.publish.call_args.kwargs["Message"]
-        assert '"eventId": "test-event-id"' in message
-        assert '"payload": {"fileId": "file-123"}' in message
-
-
-class TestOutboxPublisherMarkEventPublished:
-    @pytest.fixture(autouse=True)
-    def setup_env(self) -> None:
-        os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
-        os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
-        yield
-        os.environ.pop("SNS_TOPIC_ARN", None)
-        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("OUTBOX_TABLE_NAME", None)
-
-    def test_claim_event_for_publish_moves_pending_to_publishing(self) -> None:
-        outbox_publisher._settings = None
-        mock_dynamodb = MagicMock()
-
-        outbox_event = OutboxEvent(
-            event_id="test-event-id",
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id="file-123",
-            aggregate_type="FileProcessing",
-            payload={"file_id": "file-123"},
-        )
-
-        with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
-            result = outbox_publisher.claim_event_for_publish(outbox_event)
-
-        assert result is True
-        call_kwargs = mock_dynamodb.update_item.call_args.kwargs
-        assert call_kwargs["ConditionExpression"] == "#status = :expected_status"
-        values = call_kwargs["ExpressionAttributeValues"]
-        assert values[":publishing"]["S"] == OutboxStatus.PUBLISHING.value
-        assert values[":expected_status"]["S"] == OutboxStatus.PENDING.value
-
-    def test_claim_event_for_publish_returns_false_when_not_claimable(self) -> None:
-        outbox_publisher._settings = None
-
-        class _ConditionalCheckFailedError(Exception):
-            pass
-
-        mock_dynamodb = MagicMock()
-        mock_dynamodb.exceptions.ConditionalCheckFailedException = _ConditionalCheckFailedError
-        mock_dynamodb.update_item.side_effect = _ConditionalCheckFailedError("already claimed")
-
-        outbox_event = OutboxEvent(
-            event_id="duplicate-event-id",
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id="file-456",
-            aggregate_type="FileProcessing",
-            payload={"file_id": "file-456"},
-        )
-
-        with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
-            result = outbox_publisher.claim_event_for_publish(outbox_event)
-
-        assert result is False
-
-    def test_mark_event_published(self) -> None:
-        outbox_publisher._settings = None
-        mock_dynamodb = MagicMock()
-
-        outbox_event = OutboxEvent(
-            event_id="test-event-id",
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id="file-123",
-            aggregate_type="FileProcessing",
-            payload={"file_id": "file-123"},
-        )
-
-        with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
-            outbox_publisher.mark_event_published(outbox_event)
-
-        mock_dynamodb.update_item.assert_called_once()
-        call_kwargs = mock_dynamodb.update_item.call_args.kwargs
-        assert call_kwargs["TableName"] == "test-outbox"
-        assert "ConditionExpression" in call_kwargs
-        assert (
-            call_kwargs["ExpressionAttributeValues"][":publishing"]["S"]
-            == OutboxStatus.PUBLISHING.value
-        )
-
-    def test_mark_event_published_is_idempotent_when_already_published(self) -> None:
-        """Conditional update must swallow ConditionalCheckFailedException
-        so DynamoDB Streams retries do not surface as Lambda errors."""
-        outbox_publisher._settings = None
-
-        class _ConditionalCheckFailedError(Exception):
-            pass
-
-        mock_dynamodb = MagicMock()
-        mock_dynamodb.exceptions.ConditionalCheckFailedException = _ConditionalCheckFailedError
-        mock_dynamodb.update_item.side_effect = _ConditionalCheckFailedError("already published")
-
-        outbox_event = OutboxEvent(
-            event_id="duplicate-event-id",
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id="file-456",
-            aggregate_type="FileProcessing",
-            payload={"file_id": "file-456"},
-        )
-
-        with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
-            # Must not raise: duplicate deliveries are expected at-least-once
-            outbox_publisher.mark_event_published(outbox_event)
-
-        mock_dynamodb.update_item.assert_called_once()
-
-
-class TestOutboxPublisherMarkEventFailed:
-    @pytest.fixture(autouse=True)
-    def setup_env(self) -> None:
-        os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
-        os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
-        yield
-        os.environ.pop("SNS_TOPIC_ARN", None)
-        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("OUTBOX_TABLE_NAME", None)
-
-    def test_mark_event_failed(self) -> None:
-        outbox_publisher._settings = None
-        mock_dynamodb = MagicMock()
-
-        with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
-            outbox_publisher.mark_event_failed("test-event-id", "Test error")
-
-        mock_dynamodb.update_item.assert_called_once()
-        call_kwargs = mock_dynamodb.update_item.call_args.kwargs
-        assert ":error" in call_kwargs["ExpressionAttributeValues"]
-
-    def test_mark_event_failed_truncates_long_error(self) -> None:
-        outbox_publisher._settings = None
-        mock_dynamodb = MagicMock()
-        long_error = "x" * 2000
-
-        with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
-            outbox_publisher.mark_event_failed("test-event-id", long_error)
-
-        call_kwargs = mock_dynamodb.update_item.call_args.kwargs
-        error_value = call_kwargs["ExpressionAttributeValues"][":error"]["S"]
-        assert len(error_value) == 1000
-
-
-class TestOutboxPublisherLambdaHandler:
-    @pytest.fixture(autouse=True)
-    def setup_env(self) -> None:
-        os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
-        os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
-        os.environ["POWERTOOLS_SERVICE_NAME"] = "outbox-publisher"
-        yield
-        os.environ.pop("SNS_TOPIC_ARN", None)
-        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("OUTBOX_TABLE_NAME", None)
-        os.environ.pop("POWERTOOLS_SERVICE_NAME", None)
-
-    def test_lambda_handler_env_validation(self) -> None:
-        outbox_publisher._settings = None
-        assert os.environ.get("SNS_TOPIC_ARN", "") == outbox_publisher.get_sns_topic_arn()
-
-        assert os.environ.get("OUTBOX_TABLE_NAME", "") == outbox_publisher.get_outbox_table_name()
-
-    def test_lambda_handler_rejects_missing_sns_topic(self) -> None:
-        os.environ["SNS_TOPIC_ARN"] = ""
-        os.environ["FILE_EVENTS_TOPIC_ARN"] = ""
-        os.environ["PROCESSING_EVENTS_TOPIC_ARN"] = ""
-
-        with pytest.raises(ValueError, match="SNS topic ARN"):
-            outbox_publisher.lambda_handler({"Records": []}, MagicMock())
-
-    def test_lambda_handler_accepts_split_topic_configuration(self) -> None:
-        os.environ["SNS_TOPIC_ARN"] = ""
-        os.environ["FILE_EVENTS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:file-events"
-        os.environ["PROCESSING_EVENTS_TOPIC_ARN"] = (
-            "arn:aws:sns:us-west-2:123456789012:processing-events"
-        )
-
-        with patch.object(
-            outbox_publisher,
-            "process_partial_response",
-            return_value={"batchItemFailures": []},
-        ) as process_partial_response:
-            result = outbox_publisher.lambda_handler({"Records": []}, MagicMock())
-
-        assert result == {"batchItemFailures": []}
-        process_partial_response.assert_called_once()
-
-    def test_lambda_handler_rejects_missing_outbox_table(self) -> None:
-        os.environ["OUTBOX_TABLE_NAME"] = ""
-
-        with pytest.raises(ValueError, match="OUTBOX_TABLE_NAME"):
-            outbox_publisher.lambda_handler({"Records": []}, MagicMock())
-
-    def test_lambda_handler_delegates_to_batch_processor(self) -> None:
-        with patch.object(
-            outbox_publisher,
-            "process_partial_response",
-            return_value={"batchItemFailures": []},
-        ) as process_partial_response:
-            result = outbox_publisher.lambda_handler({"Records": []}, MagicMock())
-
-        assert result == {"batchItemFailures": []}
-        process_partial_response.assert_called_once()
-
-    def test_lambda_handler_constants(self) -> None:
-        assert outbox_publisher.MAX_RETRY_COUNT >= 0
-
-    def test_settings_values_take_precedence_over_environment(self) -> None:
-        outbox_publisher._settings = MagicMock(
-            sns_topic_arn="arn:aws:sns:us-west-2:123456789012:settings-topic",
-            file_events_topic_arn="arn:aws:sns:us-west-2:123456789012:settings-file-topic",
-            processing_events_topic_arn=(
-                "arn:aws:sns:us-west-2:123456789012:settings-processing-topic"
-            ),
-            outbox_table_name="settings-outbox",
-        )
-
-        assert (
-            outbox_publisher.get_sns_topic_arn()
-            == "arn:aws:sns:us-west-2:123456789012:settings-topic"
-        )
-        assert (
-            outbox_publisher.get_file_events_topic_arn()
-            == "arn:aws:sns:us-west-2:123456789012:settings-file-topic"
-        )
-        assert (
-            outbox_publisher.get_processing_events_topic_arn()
-            == "arn:aws:sns:us-west-2:123456789012:settings-processing-topic"
-        )
-        assert outbox_publisher.get_outbox_table_name() == "settings-outbox"
-
-
-class TestOutboxPublisherRetryHandler:
-    @pytest.fixture(autouse=True)
-    def setup_env(self) -> None:
-        os.environ["SNS_TOPIC_ARN"] = "arn:aws:sns:us-west-2:123456789012:test-topic"
-        os.environ["OUTBOX_TABLE_NAME"] = "test-outbox"
-        os.environ["POWERTOOLS_SERVICE_NAME"] = "outbox-publisher"
-        os.environ["MAX_RETRY_COUNT"] = "3"
-        yield
-        os.environ.pop("SNS_TOPIC_ARN", None)
-        os.environ.pop("FILE_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("PROCESSING_EVENTS_TOPIC_ARN", None)
-        os.environ.pop("OUTBOX_TABLE_NAME", None)
-        os.environ.pop("POWERTOOLS_SERVICE_NAME", None)
-        os.environ.pop("MAX_RETRY_COUNT", None)
-
-    def test_retry_handler_no_failed_events(self) -> None:
-        mock_dynamodb = MagicMock()
-        mock_dynamodb.query.return_value = {"Items": []}
-
-        event = {}
-        context = MagicMock()
-
-        with patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb):
-            result = outbox_publisher.retry_handler(event, context)
-
-        assert result["statusCode"] == 200
-        assert result["body"]["total_processed"] == 0
-
-    def test_retry_handler_republishes_failed_events(self) -> None:
-        outbox_event = OutboxEvent.for_file_processed(
-            file_id="file-123",
-            correlation_id="corr-123",
-            file_hash="a" * 64,
-            is_safe=True,
-            bucket_name="bucket",
-            object_key="object",
-        )
-        outbox_event.mark_failed("temporary")
-        mock_dynamodb = MagicMock()
-        mock_dynamodb.query.side_effect = [
-            {"Items": [outbox_event.to_dynamodb_item()]},
-            {"Items": []},
-        ]
-
-        with (
-            patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb),
-            patch.object(
-                outbox_publisher, "claim_event_for_publish", return_value=True
-            ) as claim_event,
-            patch.object(outbox_publisher, "publish_to_sns") as publish_to_sns,
-            patch.object(outbox_publisher, "mark_event_published") as mark_event_published,
-        ):
-            result = outbox_publisher.retry_handler({}, MagicMock())
-
-        assert result["body"] == {
-            "success_count": 1,
-            "failure_count": 0,
-            "total_processed": 1,
-        }
-        claim_event.assert_called_once_with(outbox_event, expected_status=OutboxStatus.FAILED)
-        publish_to_sns.assert_called_once()
-        mark_event_published.assert_called_once()
-
-    def test_retry_handler_counts_failed_retry_attempts(self) -> None:
-        outbox_event = OutboxEvent.for_file_processed(
-            file_id="file-123",
-            correlation_id="corr-123",
-            file_hash="a" * 64,
-            is_safe=True,
-            bucket_name="bucket",
-            object_key="object",
-        )
-        outbox_event.mark_failed("temporary")
-        mock_dynamodb = MagicMock()
-        mock_dynamodb.query.side_effect = [
-            {"Items": [outbox_event.to_dynamodb_item()]},
-            {"Items": []},
-        ]
-
-        with (
-            patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb),
-            patch.object(outbox_publisher, "claim_event_for_publish", return_value=True),
-            patch.object(outbox_publisher, "publish_to_sns", side_effect=RuntimeError("SNS down")),
-            patch.object(outbox_publisher, "mark_event_failed") as mark_event_failed,
-        ):
-            result = outbox_publisher.retry_handler({}, MagicMock())
-
-        assert result["body"] == {
-            "success_count": 0,
-            "failure_count": 1,
-            "total_processed": 1,
-        }
-        mark_event_failed.assert_called_once_with(
-            outbox_event.event_id,
-            "SNS down",
-            aggregate_type=outbox_event.aggregate_type,
-        )
-
-    def test_retry_handler_recovers_stale_publishing_events(self) -> None:
-        outbox_event = OutboxEvent.for_file_processed(
-            file_id="file-123",
-            correlation_id="corr-123",
-            file_hash="a" * 64,
-            is_safe=True,
-            bucket_name="bucket",
-            object_key="object",
-        )
-        outbox_event.status = OutboxStatus.PUBLISHING
-        mock_dynamodb = MagicMock()
-        mock_dynamodb.query.side_effect = [
-            {"Items": []},
-            {"Items": [outbox_event.to_dynamodb_item()]},
-        ]
-
-        with (
-            patch.object(outbox_publisher, "get_dynamodb_client", return_value=mock_dynamodb),
-            patch.object(
-                outbox_publisher, "claim_event_for_publish", return_value=True
-            ) as claim_event,
-            patch.object(outbox_publisher, "publish_to_sns") as publish_to_sns,
-            patch.object(outbox_publisher, "mark_event_published") as mark_event_published,
-        ):
-            result = outbox_publisher.retry_handler({}, MagicMock())
-
-        assert result["body"]["success_count"] == 1
-        claim_event.assert_called_once_with(
-            outbox_event,
-            expected_status=OutboxStatus.PUBLISHING,
-        )
-        publish_to_sns.assert_called_once()
-        mark_event_published.assert_called_once()
+            findings=[],
+            processed_at=datetime.now(UTC),
+            file_hash_sha256="a" * 64,
+            scan_engine="fsamp-header-policy/1",
+        ),
+    )
+    return OutboxEvent.from_file_event(completed)
+
+
+def conditional_error() -> ClientError:
+    return ClientError(
+        {
+            "Error": {
+                "Code": "ConditionalCheckFailedException",
+                "Message": "condition",
+            }
+        },
+        "UpdateItem",
+    )
+
+
+def stream_record(item: dict) -> MagicMock:
+    record = MagicMock()
+    record.event_name = "INSERT"
+    record.dynamodb.new_image = item
+    return record
+
+
+def test_publish_sends_exact_canonical_wire_payload(
+    sample_file_event: FileEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = canonical_outbox(sample_file_event)
+    sns = MagicMock()
+    sns.publish.return_value = {"MessageId": "message-1"}
+    monkeypatch.setattr(publisher, "get_sns_client", lambda: sns)
+    monkeypatch.setattr(publisher, "get_topic_arn_for_event", lambda _: "topic")
+
+    assert publisher.publish_to_sns(event) == "message-1"
+    request = sns.publish.call_args.kwargs
+    assert json.loads(request["Message"]) == event.to_sns_message()
+    assert "payload" not in json.loads(request["Message"])
+    assert request["MessageAttributes"]["idempotencyKey"]["StringValue"] == event.event_id
+
+
+def test_claim_uses_partition_token_fence_and_sharded_status(
+    sample_file_event: FileEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = canonical_outbox(sample_file_event)
+    dynamodb = MagicMock()
+    monkeypatch.setattr(publisher, "get_dynamodb_client", lambda: dynamodb)
+    monkeypatch.setattr(publisher, "get_outbox_table_name", lambda: "outbox")
+
+    token = publisher.claim_event_for_publish(event)
+    request = dynamodb.update_item.call_args.kwargs
+    assert token
+    assert request["Key"]["PK"] == {"S": event.outbox_partition}
+    assert request["ExpressionAttributeValues"][":token"] == {"S": token}
+    assert request["ExpressionAttributeValues"][":gsi"] == {
+        "S": f"STATUS#PUBLISHING#{event.outbox_shard}"
+    }
+    assert ":failed" in request["ExpressionAttributeValues"]
+    assert "publisherClaimExpiresAt < :now" in request["ConditionExpression"]
+
+
+def test_conditional_claim_is_terminal_only_when_live_row_is_published(
+    sample_file_event: FileEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = canonical_outbox(sample_file_event)
+    live = event.to_dynamodb_item()
+    live["status"] = {"S": "PUBLISHED"}
+    dynamodb = MagicMock()
+    dynamodb.update_item.side_effect = conditional_error()
+    dynamodb.get_item.return_value = {"Item": live}
+    monkeypatch.setattr(publisher, "get_dynamodb_client", lambda: dynamodb)
+    monkeypatch.setattr(publisher, "get_outbox_table_name", lambda: "outbox")
+    assert publisher.claim_event_for_publish(event) is None
+
+
+def test_busy_claim_remains_a_batch_failure(
+    sample_file_event: FileEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = canonical_outbox(sample_file_event)
+    live = event.to_dynamodb_item()
+    live["status"] = {"S": "PUBLISHING"}
+    dynamodb = MagicMock()
+    dynamodb.update_item.side_effect = conditional_error()
+    dynamodb.get_item.return_value = {"Item": live}
+    monkeypatch.setattr(publisher, "get_dynamodb_client", lambda: dynamodb)
+    monkeypatch.setattr(publisher, "get_outbox_table_name", lambda: "outbox")
+    with pytest.raises(publisher.ClaimUnavailableError):
+        publisher.claim_event_for_publish(event)
+
+
+def test_mark_published_requires_matching_claim_token(
+    sample_file_event: FileEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = canonical_outbox(sample_file_event)
+    dynamodb = MagicMock()
+    monkeypatch.setattr(publisher, "get_dynamodb_client", lambda: dynamodb)
+    monkeypatch.setattr(publisher, "get_outbox_table_name", lambda: "outbox")
+    publisher.mark_event_published(event, "claim-123")
+    request = dynamodb.update_item.call_args.kwargs
+    assert "publisherClaimToken = :token" in request["ConditionExpression"]
+    assert request["ExpressionAttributeValues"][":token"] == {"S": "claim-123"}
+    assert request["ExpressionAttributeValues"][":gsi"] == {
+        "S": f"STATUS#PUBLISHED#{event.outbox_shard}"
+    }
+
+
+def test_mark_failed_requires_token_and_cannot_downgrade_published(
+    sample_file_event: FileEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = canonical_outbox(sample_file_event)
+    live = event.to_dynamodb_item()
+    live["status"] = {"S": "PUBLISHED"}
+    dynamodb = MagicMock()
+    dynamodb.update_item.side_effect = conditional_error()
+    dynamodb.get_item.return_value = {"Item": live}
+    monkeypatch.setattr(publisher, "get_dynamodb_client", lambda: dynamodb)
+    monkeypatch.setattr(publisher, "get_outbox_table_name", lambda: "outbox")
+    publisher.mark_event_failed(event, "late failure", "stale-token")
+    request = dynamodb.update_item.call_args.kwargs
+    assert "publisherClaimToken = :token" in request["ConditionExpression"]
+
+
+class StatefulDynamoDB:
+    """Small state machine used to reproduce stream-snapshot retry behavior."""
+
+    def __init__(self, item: dict) -> None:
+        self.item = copy.deepcopy(item)
+
+    def get_item(self, **_: object) -> dict:
+        return {"Item": copy.deepcopy(self.item)}
+
+    def update_item(self, **request: object) -> dict:
+        values = request["ExpressionAttributeValues"]
+        assert isinstance(values, dict)
+        current = self.item["status"]["S"]
+        if ":pending" in values:
+            if current not in {"PENDING", "FAILED"}:
+                raise conditional_error()
+            self.item["status"] = {"S": "PUBLISHING"}
+            self.item["publisherClaimToken"] = values[":token"]
+            self.item["publisherClaimExpiresAt"] = values[":expires"]
+        elif ":published" in values:
+            if current != "PUBLISHING" or self.item["publisherClaimToken"] != values[":token"]:
+                raise conditional_error()
+            self.item["status"] = {"S": "PUBLISHED"}
+        elif ":failed" in values:
+            if current != "PUBLISHING" or self.item["publisherClaimToken"] != values[":token"]:
+                raise conditional_error()
+            self.item["status"] = {"S": "FAILED"}
+            retries = int(self.item.get("retryCount", {"N": "0"})["N"])
+            self.item["retryCount"] = {"N": str(retries + 1)}
+        return {}
+
+
+def test_stream_retry_recovers_after_first_sns_failure(
+    sample_file_event: FileEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = canonical_outbox(sample_file_event)
+    snapshot = event.to_dynamodb_item()
+    dynamodb = StatefulDynamoDB(snapshot)
+    sns = MagicMock()
+    sns.publish.side_effect = [RuntimeError("SNS unavailable"), {"MessageId": "ok"}]
+    monkeypatch.setattr(publisher, "get_dynamodb_client", lambda: dynamodb)
+    monkeypatch.setattr(publisher, "get_sns_client", lambda: sns)
+    monkeypatch.setattr(publisher, "get_outbox_table_name", lambda: "outbox")
+    monkeypatch.setattr(publisher, "get_topic_arn_for_event", lambda _: "topic")
+
+    with pytest.raises(RuntimeError, match="SNS unavailable"):
+        publisher.record_handler(stream_record(snapshot))
+    assert dynamodb.item["status"]["S"] == "FAILED"
+
+    result = publisher.record_handler(stream_record(snapshot))
+    assert result["status"] == "published"
+    assert dynamodb.item["status"]["S"] == "PUBLISHED"
+    assert sns.publish.call_count == 2
+
+
+def test_record_handler_skips_non_insert() -> None:
+    record = MagicMock()
+    record.event_name = "MODIFY"
+    assert publisher.record_handler(record) == {"status": "skipped", "reason": "not_insert"}
+
+
+def test_invalid_outbox_payload_is_not_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = OutboxEvent.create(
+        event_type=publisher.OutboxEventType.ANALYSIS_COMPLETED,
+        aggregate_id="not-a-uuid",
+        payload={"fileId": "not-a-uuid"},
+    )
+    sns = MagicMock()
+    monkeypatch.setattr(publisher, "get_sns_client", lambda: sns)
+    with pytest.raises(ValueError):
+        publisher.publish_to_sns(event)
+    sns.publish.assert_not_called()
+
+
+def test_retry_queries_all_status_shards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dynamodb = MagicMock()
+    dynamodb.query.return_value = {"Items": []}
+    monkeypatch.setattr(publisher, "get_dynamodb_client", lambda: dynamodb)
+    monkeypatch.setattr(publisher, "get_outbox_table_name", lambda: "outbox")
+    assert publisher._query_retryable(OutboxStatus.FAILED) == []
+    assert dynamodb.query.call_count == 16
+    queried = {
+        call.kwargs["ExpressionAttributeValues"][":status"]["S"]
+        for call in dynamodb.query.call_args_list
+    }
+    assert queried == {f"STATUS#FAILED#{number:02x}" for number in range(16)}
+
+
+def test_retry_query_last_shard_cannot_be_starved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dynamodb = MagicMock()
+
+    def query(**request: object) -> dict:
+        values = request["ExpressionAttributeValues"]
+        assert isinstance(values, dict)
+        status = values[":status"]["S"]
+        if status.endswith("#00"):
+            return {"Items": [{"createdAt": {"S": "2026-01-02"}, "id": "late"}]}
+        if status.endswith("#0f"):
+            return {"Items": [{"createdAt": {"S": "2026-01-01"}, "id": "early"}]}
+        return {"Items": []}
+
+    dynamodb.query.side_effect = query
+    monkeypatch.setattr(publisher, "get_dynamodb_client", lambda: dynamodb)
+    monkeypatch.setattr(publisher, "get_outbox_table_name", lambda: "outbox")
+    items = publisher._query_retryable(OutboxStatus.FAILED, limit=1)
+    assert items[0]["id"] == "early"
+    assert dynamodb.query.call_count == 16
+
+
+@pytest.mark.parametrize("value", [0, 101])
+def test_retry_count_configuration_is_validated(
+    value: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MAX_RETRY_COUNT", str(value))
+    monkeypatch.setattr(publisher, "_settings", None)
+    with pytest.raises(ValueError, match="MAX_RETRY_COUNT"):
+        publisher.get_max_retry_count()

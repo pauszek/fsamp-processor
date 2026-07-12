@@ -5,6 +5,7 @@ Implements Outbox Pattern for reliable event publishing.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -12,15 +13,30 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from processor.domain.events import EventType, FileEvent
+
+OUTBOX_SHARD_COUNT = 16
+OUTBOX_DEFAULT_RETENTION_SECONDS = 30 * 24 * 60 * 60
+
+
+def outbox_shard(aggregate_id: str) -> str:
+    """Return the stable two-character shard shared by all FSAMP outboxes."""
+    digest = hashlib.sha256(aggregate_id.encode("utf-8")).digest()
+    return f"{(digest[0] & 0xFF) % OUTBOX_SHARD_COUNT:02x}"
+
 
 class ProcessingStatus(StrEnum):
     """Status of file processing."""
 
     PENDING = "PENDING"
-    IN_PROGRESS = "IN_PROGRESS"
+    UPLOADED = "UPLOADED"
+    SCANNING = "SCANNING"
+    PROCESSING = "PROCESSING"
+    # Backward-compatible aliases. Persisted values use the shared gateway vocabulary.
+    IN_PROGRESS = "PROCESSING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
-    RETRYING = "RETRYING"
+    RETRYING = "PROCESSING"
 
 
 class OutboxStatus(StrEnum):
@@ -148,28 +164,34 @@ class MetadataRecord:
     object_key: str
     status: ProcessingStatus
 
+    checksum_sha256: str | None = None
     file_hash: str | None = None
     is_encrypted: bool = True
+    encryption_algorithm: str = "AES/GCM/NoPadding"
     kms_key_id: str | None = None
 
     is_safe: bool | None = None
     scan_findings: list[str] = field(default_factory=list)
 
     created_at: str | None = None
+    created_by: str | None = None
     updated_at: str | None = None
     processed_at: str | None = None
 
     error_message: str | None = None
     error_code: str | None = None
     retry_count: int = 0
+    last_processed_event_id: str | None = None
 
     ttl: int | None = None
 
     def to_dynamodb_item(self) -> dict[str, Any]:
         """Convert to DynamoDB item format."""
-        item = {
+        item: dict[str, Any] = {
             "PK": {"S": f"FILE#{self.file_id}"},
-            "SK": {"S": f"TS#{self.timestamp}"},
+            "SK": {"S": "METADATA"},
+            "entityType": {"S": "FILE_METADATA"},
+            "fileId": {"S": self.file_id},
             "correlationId": {"S": self.correlation_id},
             "originalFilename": {"S": self.original_filename},
             "fileSizeBytes": {"N": str(self.file_size_bytes)},
@@ -177,11 +199,15 @@ class MetadataRecord:
             "objectKey": {"S": self.object_key},
             "status": {"S": self.status.value},
             "isEncrypted": {"BOOL": self.is_encrypted},
+            "encryptionAlgorithm": {"S": self.encryption_algorithm},
             "retryCount": {"N": str(self.retry_count)},
         }
 
         if self.mime_type:
             item["mimeType"] = {"S": self.mime_type}
+        if self.checksum_sha256:
+            item["checksumSHA256"] = {"S": self.checksum_sha256}
+            item["checksumAlgorithm"] = {"S": "SHA256"}
         if self.file_hash:
             item["fileHash"] = {"S": self.file_hash}
         if self.kms_key_id:
@@ -192,6 +218,8 @@ class MetadataRecord:
             item["scanFindings"] = {"SS": self.scan_findings}
         if self.created_at:
             item["createdAt"] = {"S": self.created_at}
+        if self.created_by:
+            item["createdBy"] = {"S": self.created_by}
         if self.updated_at:
             item["updatedAt"] = {"S": self.updated_at}
         if self.processed_at:
@@ -202,6 +230,8 @@ class MetadataRecord:
             item["errorCode"] = {"S": self.error_code}
         if self.ttl:
             item["ttl"] = {"N": str(self.ttl)}
+        if self.last_processed_event_id:
+            item["lastProcessedEventId"] = {"S": self.last_processed_event_id}
 
         return item
 
@@ -209,32 +239,45 @@ class MetadataRecord:
     def from_dynamodb_item(cls, item: dict[str, Any]) -> MetadataRecord:
         """Create from DynamoDB item format."""
         pk = item["PK"]["S"]  # FILE#<file_id>
-        sk = item["SK"]["S"]  # TS#<timestamp>
-
-        file_id = pk.replace("FILE#", "")
-        timestamp = sk.replace("TS#", "")
+        file_id = item.get("fileId", {}).get("S") or pk.removeprefix("FILE#")
+        timestamp = (
+            item.get("updatedAt", {}).get("S")
+            or item.get("createdAt", {}).get("S")
+            or datetime.now(UTC).isoformat()
+        )
+        original_filename = item.get("originalFilename", {}).get("S") or item.get(
+            "fileName", {}
+        ).get("S")
+        if not original_filename:
+            raise ValueError("DynamoDB metadata record is missing originalFilename")
 
         return cls(
             file_id=file_id,
             timestamp=timestamp,
             correlation_id=item["correlationId"]["S"],
-            original_filename=item["originalFilename"]["S"],
+            original_filename=original_filename,
             file_size_bytes=int(item["fileSizeBytes"]["N"]),
             mime_type=item.get("mimeType", {}).get("S"),
             bucket_name=item["bucketName"]["S"],
             object_key=item["objectKey"]["S"],
             status=ProcessingStatus(item["status"]["S"]),
+            checksum_sha256=(
+                item.get("checksumSHA256", {}).get("S") or item.get("checksum", {}).get("S")
+            ),
             file_hash=item.get("fileHash", {}).get("S"),
             is_encrypted=item.get("isEncrypted", {}).get("BOOL", True),
+            encryption_algorithm=item.get("encryptionAlgorithm", {}).get("S", "AES/GCM/NoPadding"),
             kms_key_id=item.get("kmsKeyId", {}).get("S"),
             is_safe=item.get("isSafe", {}).get("BOOL"),
             scan_findings=list(item.get("scanFindings", {}).get("SS", [])),
             created_at=item.get("createdAt", {}).get("S"),
+            created_by=item.get("createdBy", {}).get("S"),
             updated_at=item.get("updatedAt", {}).get("S"),
             processed_at=item.get("processedAt", {}).get("S"),
             error_message=item.get("errorMessage", {}).get("S"),
             error_code=item.get("errorCode", {}).get("S"),
             retry_count=int(item.get("retryCount", {}).get("N", "0")),
+            last_processed_event_id=item.get("lastProcessedEventId", {}).get("S"),
             ttl=int(item["ttl"]["N"]) if "ttl" in item else None,
         )
 
@@ -277,6 +320,15 @@ class OutboxEvent:
 
     ttl: int | None = None
 
+    outbox_partition: str | None = None
+    outbox_shard: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.outbox_partition is None:
+            self.outbox_partition = f"OUTBOX#{self.aggregate_type}#{self.aggregate_id}"
+        if self.outbox_shard is None:
+            self.outbox_shard = outbox_shard(self.aggregate_id)
+
     @classmethod
     def create(
         cls,
@@ -297,77 +349,36 @@ class OutboxEvent:
         )
 
     @classmethod
-    def for_file_processed(
+    def from_file_event(
         cls,
-        file_id: str,
-        correlation_id: str,
-        file_hash: str,
-        is_safe: bool,
-        bucket_name: str,
-        object_key: str,
+        event: FileEvent,
+        *,
+        aggregate_type: str = "FileProcessing",
     ) -> OutboxEvent:
-        """Create event for successful file processing."""
-        return cls.create(
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id=file_id,
-            payload={
-                "fileId": file_id,
-                "correlationId": correlation_id,
-                "fileHash": file_hash,
-                "isSafe": is_safe,
-                "bucketName": bucket_name,
-                "objectKey": object_key,
-                "processedAt": datetime.now(UTC).isoformat(),
-            },
-        )
-
-    @classmethod
-    def for_file_failed(
-        cls,
-        file_id: str,
-        correlation_id: str,
-        error_code: str,
-        error_message: str,
-    ) -> OutboxEvent:
-        """Create event for failed file processing."""
-        return cls.create(
-            event_type=OutboxEventType.PROCESSING_FAILED,
-            aggregate_id=file_id,
-            payload={
-                "fileId": file_id,
-                "correlationId": correlation_id,
-                "errorCode": error_code,
-                "errorMessage": error_message,
-                "failedAt": datetime.now(UTC).isoformat(),
-            },
-        )
-
-    @classmethod
-    def for_file_quarantined(
-        cls,
-        file_id: str,
-        correlation_id: str,
-        reason: str,
-        findings: list[str],
-    ) -> OutboxEvent:
-        """Create event for quarantined (unsafe) file."""
-        return cls.create(
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id=file_id,
-            payload={
-                "fileId": file_id,
-                "correlationId": correlation_id,
-                "isSafe": False,
-                "reason": reason,
-                "findings": findings,
-                "quarantinedAt": datetime.now(UTC).isoformat(),
-            },
+        """Create an outbox row whose SNS body is the canonical event itself."""
+        if event.event_type not in {
+            EventType.ANALYSIS_COMPLETED,
+            EventType.PROCESSING_FAILED,
+            EventType.FILE_SCANNED,
+        }:
+            raise ValueError(f"Unsupported processor output event: {event.event_type.value}")
+        payload = event.model_dump(mode="json", by_alias=True, exclude_none=True)
+        # Revalidate the wire shape here so invalid payloads can never enter the outbox.
+        canonical = FileEvent.model_validate(payload)
+        return cls(
+            event_id=canonical.event_id_str,
+            event_type=OutboxEventType(canonical.event_type.value),
+            aggregate_id=canonical.file_id_str,
+            aggregate_type=aggregate_type,
+            payload=payload,
+            message_group_id=canonical.file_id_str,
+            created_at=canonical.timestamp.isoformat(),
         )
 
     def to_dynamodb_item(self) -> dict[str, Any]:
         """Convert to DynamoDB item format for outbox table."""
         item = {
-            "PK": {"S": f"OUTBOX#{self.aggregate_type}"},
+            "PK": {"S": str(self.outbox_partition)},
             "SK": {"S": f"EVENT#{self.event_id}"},
             "eventId": {"S": self.event_id},
             "eventType": {"S": self.event_type.value},
@@ -377,7 +388,9 @@ class OutboxEvent:
             "status": {"S": self.status.value},
             "createdAt": {"S": self.created_at},
             "retryCount": {"N": str(self.retry_count)},
-            "GSI1PK": {"S": f"STATUS#{self.status.value}"},
+            "outboxPartition": {"S": str(self.outbox_partition)},
+            "outboxShard": {"S": str(self.outbox_shard)},
+            "GSI1PK": {"S": f"STATUS#{self.status.value}#{self.outbox_shard}"},
             "GSI1SK": {"S": self.created_at},
         }
 
@@ -424,6 +437,15 @@ class OutboxEvent:
             last_error=cls._dynamodb_value(item.get("lastError")),
             message_group_id=cls._dynamodb_value(item.get("messageGroupId")),
             ttl=int(cls._dynamodb_value(item["ttl"])) if "ttl" in item else None,
+            outbox_partition=str(
+                cls._dynamodb_value(item.get("outboxPartition"))
+                or cls._dynamodb_value(item.get("PK"))
+            ),
+            outbox_shard=(
+                str(cls._dynamodb_value(item.get("outboxShard")))
+                if item.get("outboxShard") is not None
+                else None
+            ),
         )
 
     @classmethod
@@ -434,11 +456,14 @@ class OutboxEvent:
             raise ValueError("No NewImage in DynamoDB stream record")
         return cls.from_dynamodb_item(new_image)
 
-    def mark_published(self) -> OutboxEvent:
+    def mark_published(
+        self,
+        retention_seconds: int = OUTBOX_DEFAULT_RETENTION_SECONDS,
+    ) -> OutboxEvent:
         """Mark event as published (returns new instance for immutability in tests)."""
         self.status = OutboxStatus.PUBLISHED
         self.published_at = datetime.now(UTC).isoformat()
-        self.ttl = int(datetime.now(UTC).timestamp()) + 86400
+        self.ttl = int(datetime.now(UTC).timestamp()) + retention_seconds
         return self
 
     def mark_failed(self, error: str) -> OutboxEvent:
@@ -449,15 +474,13 @@ class OutboxEvent:
         return self
 
     def to_sns_message(self) -> dict[str, Any]:
-        """Convert to SNS message format."""
-        return {
-            "eventId": self.event_id,
-            "eventType": self.event_type.value,
-            "aggregateId": self.aggregate_id,
-            "aggregateType": self.aggregate_type,
-            "payload": self.payload,
-            "timestamp": self.created_at,
-        }
+        """Return a schema-valid canonical FSAMP event as the SNS body."""
+        event = FileEvent.model_validate(self.payload)
+        if event.event_id_str != self.event_id:
+            raise ValueError("Outbox eventId does not match canonical payload eventId")
+        if event.event_type.value != self.event_type.value:
+            raise ValueError("Outbox eventType does not match canonical payload eventType")
+        return event.model_dump(mode="json", by_alias=True, exclude_none=True)
 
     def to_sns_attributes(self) -> dict[str, dict[str, str]]:
         """Generate SNS message attributes for filtering."""

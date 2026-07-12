@@ -288,7 +288,7 @@ class TestRecordHandler:
         mock_processor.handle.assert_called_once()
 
     @patch("processor.lambda_handler.get_file_processor")
-    def test_record_handler_returns_skipped_for_non_retryable_error(self, mock_get_processor):
+    def test_record_handler_rethrows_non_retryable_error_for_dlq_redrive(self, mock_get_processor):
         mock_processor = MagicMock()
         mock_processor.handle.side_effect = NonRetryableError("permanent validation failure")
         mock_get_processor.return_value = mock_processor
@@ -308,14 +308,8 @@ class TestRecordHandler:
             }
         )
 
-        result = record_handler(record)
-
-        assert result == {
-            "messageId": "msg-non-retryable",
-            "status": "skipped",
-            "error": "[NON_RETRYABLE_ERROR] permanent validation failure",
-            "retryable": False,
-        }
+        with pytest.raises(NonRetryableError, match="permanent validation failure"):
+            record_handler(record)
 
 
 class TestColdStart:

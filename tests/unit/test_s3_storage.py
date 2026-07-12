@@ -31,7 +31,7 @@ class TestS3FileStorageDownload:
     def storage(self) -> S3FileStorage:
         client = MagicMock()
         client.get_object.return_value = {
-            "Body": MagicMock(read=lambda: b"test content"),
+            "Body": MagicMock(read=MagicMock(side_effect=[b"test content", b""])),
             "ContentType": "text/plain",
             "ContentLength": 12,
             "ETag": '"abc123"',
