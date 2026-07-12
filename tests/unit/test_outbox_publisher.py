@@ -242,6 +242,20 @@ def test_retry_queries_all_status_shards(
     assert queried == {f"STATUS#FAILED#{number:02x}" for number in range(16)}
 
 
+def test_pending_reconciliation_does_not_require_a_claim_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dynamodb = MagicMock()
+    dynamodb.query.return_value = {"Items": []}
+    monkeypatch.setattr(publisher, "get_dynamodb_client", lambda: dynamodb)
+    monkeypatch.setattr(publisher, "get_outbox_table_name", lambda: "outbox")
+
+    assert publisher._query_retryable(OutboxStatus.PENDING) == []
+
+    assert dynamodb.query.call_count == 16
+    assert all("FilterExpression" not in call.kwargs for call in dynamodb.query.call_args_list)
+
+
 def test_retry_query_last_shard_cannot_be_starved(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

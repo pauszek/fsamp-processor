@@ -383,7 +383,7 @@ def _query_retryable(status: OutboxStatus, limit: int = 100) -> list[dict[str, A
             if status == OutboxStatus.FAILED:
                 request["FilterExpression"] = "retryCount < :maxRetries"
                 values[":maxRetries"] = {"N": str(get_max_retry_count())}
-            else:
+            elif status == OutboxStatus.PUBLISHING:
                 request["FilterExpression"] = "publisherClaimExpiresAt < :now"
                 values[":now"] = {"N": str(now)}
             if start_key:
@@ -427,9 +427,13 @@ def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, A
 @tracer.capture_lambda_handler
 @metrics.log_metrics
 def retry_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
-    """Recover FAILED events and expired PUBLISHING leases across all shards."""
+    """Recover PENDING, FAILED, and expired PUBLISHING events across all shards."""
     del event, context
-    items = _query_retryable(OutboxStatus.FAILED) + _query_retryable(OutboxStatus.PUBLISHING)
+    items = (
+        _query_retryable(OutboxStatus.PENDING)
+        + _query_retryable(OutboxStatus.FAILED)
+        + _query_retryable(OutboxStatus.PUBLISHING)
+    )
     unique = {(item["PK"]["S"], item["SK"]["S"]): item for item in items}
     succeeded = 0
     failed = 0
