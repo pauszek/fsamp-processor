@@ -44,7 +44,7 @@ jobs:
           echo "auto_deploy_dev=${auto_deploy_dev}" >> "$GITHUB_OUTPUT"
 
   call-python:
-    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@3be5121f484722007182b432327f9a6a27d32458
+    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@3409376a2811efe661ea848bd6b750fbddcbd2fb
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       GABRBA_SECRET: ${{ secrets.GABRBA_SECRET }}
@@ -104,7 +104,7 @@ jobs:
 
           jq -n \
             --arg processor_source_image "${{ steps.image.outputs.source }}" \
-            --arg code_ci_workflow_sha "3be5121f484722007182b432327f9a6a27d32458" \
+            --arg code_ci_workflow_sha "3409376a2811efe661ea848bd6b750fbddcbd2fb" \
             --arg image_tag "${image_tag}" \
             '{
               event_type: "deploy-dev",
