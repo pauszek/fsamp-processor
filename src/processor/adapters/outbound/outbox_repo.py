@@ -48,7 +48,6 @@ class DynamoDBOutboxRepository(OutboxRepository):
         self._outbox_table_name = outbox_table_name
         self._retention_seconds = retention_seconds
 
-    @aws_retry()
     def save_with_outbox(
         self,
         record: MetadataRecord,
@@ -67,34 +66,35 @@ class DynamoDBOutboxRepository(OutboxRepository):
             )
             condition += f" AND {claim_condition}"
         outbox_item = outbox_event.to_dynamodb_item()
+        transaction_request: dict[str, Any] = {
+            "ClientRequestToken": outbox_event.event_id,
+            "TransactItems": [
+                {
+                    "Update": {
+                        "TableName": self._metadata_table_name,
+                        "Key": {
+                            "PK": {"S": f"FILE#{record.file_id}"},
+                            "SK": {"S": "METADATA"},
+                        },
+                        "UpdateExpression": update,
+                        "ExpressionAttributeNames": names,
+                        "ExpressionAttributeValues": values,
+                        "ConditionExpression": condition,
+                    }
+                },
+                {
+                    "Put": {
+                        "TableName": self._outbox_table_name,
+                        "Item": outbox_item,
+                        "ConditionExpression": (
+                            "attribute_not_exists(PK) AND attribute_not_exists(SK)"
+                        ),
+                    }
+                },
+            ],
+        }
         try:
-            self._client.transact_write_items(
-                ClientRequestToken=outbox_event.event_id,
-                TransactItems=[
-                    {
-                        "Update": {
-                            "TableName": self._metadata_table_name,
-                            "Key": {
-                                "PK": {"S": f"FILE#{record.file_id}"},
-                                "SK": {"S": "METADATA"},
-                            },
-                            "UpdateExpression": update,
-                            "ExpressionAttributeNames": names,
-                            "ExpressionAttributeValues": values,
-                            "ConditionExpression": condition,
-                        }
-                    },
-                    {
-                        "Put": {
-                            "TableName": self._outbox_table_name,
-                            "Item": outbox_item,
-                            "ConditionExpression": (
-                                "attribute_not_exists(PK) AND attribute_not_exists(SK)"
-                            ),
-                        }
-                    },
-                ],
-            )
+            self._transact_write(transaction_request)
         except ClientError as error:
             if self._is_idempotent_replay(error, outbox_event):
                 # The first transaction already inserted the canonical event. A later
@@ -138,6 +138,11 @@ class DynamoDBOutboxRepository(OutboxRepository):
                 resource=f"{self._metadata_table_name}/{record.file_id}",
                 cause=error,
             ) from error
+
+    @aws_retry()
+    def _transact_write(self, request: dict[str, Any]) -> None:
+        """Retry one byte-for-byte stable idempotent transaction request."""
+        self._client.transact_write_items(**request)
 
     def _metadata_has_result(self, record: MetadataRecord) -> bool:
         try:

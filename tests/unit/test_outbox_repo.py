@@ -77,6 +77,16 @@ def transaction_cancelled() -> ClientError:
     )
 
 
+def internal_server_error() -> ClientError:
+    return ClientError(
+        {
+            "Error": {"Code": "InternalServerError", "Message": "retry"},
+            "ResponseMetadata": {"HTTPStatusCode": 500},
+        },
+        "TransactWriteItems",
+    )
+
+
 def test_save_updates_shared_metadata_and_conditionally_puts_event(
     repo: DynamoDBOutboxRepository,
     client: MagicMock,
@@ -93,6 +103,21 @@ def test_save_updates_shared_metadata_and_conditionally_puts_event(
     assert "attribute_exists(PK)" in metadata_update["ConditionExpression"]
     assert event_put["Item"]["PK"] == {"S": outbox.outbox_partition}
     assert "attribute_not_exists(PK)" in event_put["ConditionExpression"]
+
+
+def test_transient_retry_reuses_identical_idempotency_request(
+    repo: DynamoDBOutboxRepository,
+    client: MagicMock,
+    record: MetadataRecord,
+    outbox: OutboxEvent,
+) -> None:
+    client.transact_write_items.side_effect = [internal_server_error(), {}]
+
+    repo.save_with_outbox(record, outbox)
+
+    assert client.transact_write_items.call_count == 2
+    first_request, second_request = client.transact_write_items.call_args_list
+    assert first_request.kwargs == second_request.kwargs
 
 
 def test_claimed_transaction_is_fenced_and_releases_the_lease(
