@@ -125,6 +125,7 @@ def get_file_processor() -> FileProcessorService:
         allowed_bucket_name=_settings.s3_bucket_name,
         allowed_region=_settings.aws_region,
         quarantine_prefix=_settings.quarantine_prefix,
+        processing_claim_ttl_seconds=_settings.processing_claim_ttl_seconds,
     )
 
     logger.info(

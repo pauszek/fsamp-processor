@@ -117,6 +117,21 @@ RUN openssl list -providers -verbose \
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Package installers are build-time tooling. Keeping them in the Lambda runtime
+# needlessly exposes their vendored dependencies and Python's ensurepip wheels.
+RUN rm -rf \
+        /var/lang/lib/python3.14/ensurepip \
+        /var/lang/lib/python3.14/site-packages/pip \
+        /var/lang/lib/python3.14/site-packages/pip-*.dist-info \
+        /var/lang/lib/python3.14/site-packages/setuptools \
+        /var/lang/lib/python3.14/site-packages/setuptools-*.dist-info \
+        /opt/venv/lib/python3.14/site-packages/pip \
+        /opt/venv/lib/python3.14/site-packages/pip-*.dist-info \
+        /opt/venv/lib/python3.14/site-packages/setuptools \
+        /opt/venv/lib/python3.14/site-packages/setuptools-*.dist-info \
+        /opt/venv/lib/python3.14/site-packages/wheel \
+        /opt/venv/lib/python3.14/site-packages/wheel-*.dist-info
+
 RUN printf '%s\n' \
         'from pathlib import Path' \
         'import subprocess' \

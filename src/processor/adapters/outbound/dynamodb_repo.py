@@ -4,19 +4,60 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 import structlog
 from botocore.exceptions import ClientError
 
 from processor.adapters.outbound.aws_retry import aws_retry
 from processor.domain.exceptions import StorageError
-from processor.domain.models import MetadataRecord, ProcessingStatus
+from processor.domain.models import MetadataRecord, ProcessingClaim, ProcessingStatus
 from processor.ports.outbound import MetadataRepository
 
 if TYPE_CHECKING:
     from mypy_boto3_dynamodb import DynamoDBClient
 
 logger = structlog.get_logger(__name__)
+
+_PROCESSOR_CLAIM_TOKEN_ATTRIBUTE = "processorClaimToken"  # noqa: S105  # nosec B105
+_PROCESSOR_CLAIM_VERSION_ATTRIBUTE = "processorClaimVersion"
+_PROCESSOR_CLAIM_EXPIRY_ATTRIBUTE = "processorClaimExpiresAt"
+_PROCESSING_EVENT_ID = "processingEventId"
+
+
+def apply_claim_fence(
+    update: str,
+    names: dict[str, str],
+    values: dict[str, dict[str, Any]],
+    claim: ProcessingClaim,
+) -> tuple[str, dict[str, str], dict[str, dict[str, Any]], str]:
+    """Fence a final state write and release its active lease atomically."""
+    names.update(
+        {
+            "#claimToken": _PROCESSOR_CLAIM_TOKEN_ATTRIBUTE,
+            "#claimVersion": _PROCESSOR_CLAIM_VERSION_ATTRIBUTE,
+            "#claimExpiresAt": _PROCESSOR_CLAIM_EXPIRY_ATTRIBUTE,
+            "#processingEventId": _PROCESSING_EVENT_ID,
+        }
+    )
+    values.update(
+        {
+            ":claimToken": {"S": claim.token},
+            ":claimVersion": {"N": str(claim.version)},
+            ":claimEventId": {"S": claim.event_id},
+        }
+    )
+    update += " REMOVE #claimToken, #claimExpiresAt, #processingEventId"
+    condition = (
+        "#claimToken = :claimToken AND #claimVersion = :claimVersion "
+        "AND #processingEventId = :claimEventId"
+    )
+    return update, names, values, condition
+
+
+def is_conditional_failure(error: ClientError) -> bool:
+    """Return whether DynamoDB rejected a compare-and-set condition."""
+    return error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException"
 
 
 def build_metadata_update(
@@ -66,20 +107,35 @@ class DynamoDBMetadataRepository(MetadataRepository):
         logger.info("DynamoDB metadata repository initialized", table=table_name)
 
     @aws_retry()
-    def save(self, record: MetadataRecord) -> None:
+    def save(
+        self,
+        record: MetadataRecord,
+        claim: ProcessingClaim | None = None,
+    ) -> None:
         """Update the shared metadata item without replacing gateway-owned fields."""
         expression, names, values = build_metadata_update(record)
+        condition: str | None = None
+        if claim is not None:
+            expression, names, values, condition = apply_claim_fence(
+                expression,
+                names,
+                values,
+                claim,
+            )
         try:
-            self._client.update_item(
-                TableName=self._table_name,
-                Key={
+            request: dict[str, Any] = {
+                "TableName": self._table_name,
+                "Key": {
                     "PK": {"S": f"FILE#{record.file_id}"},
                     "SK": {"S": "METADATA"},
                 },
-                UpdateExpression=expression,
-                ExpressionAttributeNames=names,
-                ExpressionAttributeValues=values,
-            )
+                "UpdateExpression": expression,
+                "ExpressionAttributeNames": names,
+                "ExpressionAttributeValues": values,
+            }
+            if condition is not None:
+                request["ConditionExpression"] = condition
+            self._client.update_item(**request)
             logger.info(
                 "Metadata current state saved",
                 file_id=record.file_id,
@@ -91,6 +147,76 @@ class DynamoDBMetadataRepository(MetadataRepository):
                 storage_type="dynamodb",
                 operation="update",
                 resource=f"{self._table_name}/{record.file_id}",
+                cause=error,
+            ) from error
+
+    @aws_retry()
+    def claim_processing(
+        self,
+        file_id: str,
+        event_id: str,
+        lease_seconds: int,
+    ) -> ProcessingClaim | None:
+        """Acquire a token-fenced lease or take over a lease that has expired."""
+        now = datetime.now(UTC)
+        now_epoch = int(now.timestamp())
+        expires_at_epoch = now_epoch + lease_seconds
+        token = str(uuid4())
+        try:
+            response = self._client.update_item(
+                TableName=self._table_name,
+                Key={"PK": {"S": f"FILE#{file_id}"}, "SK": {"S": "METADATA"}},
+                UpdateExpression=(
+                    "SET #status = :processing, GSI1PK = :gsi, GSI1SK = :now, "
+                    "updatedAt = :now, #claimToken = :claimToken, "
+                    "#claimExpiresAt = :claimExpiresAt, "
+                    "#claimVersion = if_not_exists(#claimVersion, :zero) + :one, "
+                    "#processingEventId = :eventId "
+                    "REMOVE errorMessage, errorCode"
+                ),
+                ConditionExpression=(
+                    "attribute_exists(PK) AND attribute_exists(SK) "
+                    "AND (attribute_not_exists(#lastProcessedEventId) "
+                    "OR #lastProcessedEventId <> :eventId) "
+                    "AND (attribute_not_exists(#claimToken) "
+                    "OR #claimExpiresAt <= :nowEpoch)"
+                ),
+                ExpressionAttributeNames={
+                    "#status": "status",
+                    "#lastProcessedEventId": "lastProcessedEventId",
+                    "#claimToken": _PROCESSOR_CLAIM_TOKEN_ATTRIBUTE,
+                    "#claimVersion": _PROCESSOR_CLAIM_VERSION_ATTRIBUTE,
+                    "#claimExpiresAt": _PROCESSOR_CLAIM_EXPIRY_ATTRIBUTE,
+                    "#processingEventId": _PROCESSING_EVENT_ID,
+                },
+                ExpressionAttributeValues={
+                    ":processing": {"S": ProcessingStatus.PROCESSING.value},
+                    ":gsi": {"S": f"STATUS#{ProcessingStatus.PROCESSING.value}"},
+                    ":now": {"S": now.isoformat()},
+                    ":nowEpoch": {"N": str(now_epoch)},
+                    ":claimToken": {"S": token},
+                    ":claimExpiresAt": {"N": str(expires_at_epoch)},
+                    ":zero": {"N": "0"},
+                    ":one": {"N": "1"},
+                    ":eventId": {"S": event_id},
+                },
+                ReturnValues="ALL_NEW",
+            )
+            attributes = response["Attributes"]
+            return ProcessingClaim(
+                event_id=event_id,
+                token=token,
+                version=int(attributes[_PROCESSOR_CLAIM_VERSION_ATTRIBUTE]["N"]),
+                expires_at_epoch=int(attributes[_PROCESSOR_CLAIM_EXPIRY_ATTRIBUTE]["N"]),
+            )
+        except ClientError as error:
+            if is_conditional_failure(error):
+                return None
+            raise StorageError(
+                message=f"Failed to claim metadata record: {error}",
+                storage_type="dynamodb",
+                operation="conditional_update",
+                resource=f"{self._table_name}/{file_id}",
                 cause=error,
             ) from error
 

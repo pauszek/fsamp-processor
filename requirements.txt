@@ -10,7 +10,7 @@ aws-lambda-powertools[tracer,aws-sdk]>=3.23.0
 pydantic>=2.12.0
 pydantic-settings>=2.12.0
 
-cryptography>=46.0.0
+cryptography>=50.0.0
 
 structlog>=25.5.0
 python-json-logger>=4.0.0

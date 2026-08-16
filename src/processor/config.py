@@ -134,6 +134,12 @@ class Settings(BaseSettings):
         le=300,
         description="Delay between retries",
     )
+    processing_claim_ttl_seconds: int = Field(
+        default=330,
+        ge=30,
+        le=7200,
+        description="Token-fenced processing lease duration",
+    )
     max_file_size_bytes: int = Field(
         default=100 * 1024 * 1024,  # 100 MB
         ge=1,

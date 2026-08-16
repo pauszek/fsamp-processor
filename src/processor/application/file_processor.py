@@ -14,12 +14,18 @@ from processor.domain.events import (
     ProcessingResultDetails,
     StorageLocation,
 )
-from processor.domain.exceptions import NonRetryableError, ProcessingError, StorageError
+from processor.domain.exceptions import (
+    NonRetryableError,
+    ProcessingClaimUnavailableError,
+    ProcessingError,
+    StorageError,
+)
 from processor.domain.models import (
     AnalysisResult,
     FileContent,
     MetadataRecord,
     OutboxEvent,
+    ProcessingClaim,
     ProcessingResult,
     ProcessingStatus,
 )
@@ -49,6 +55,7 @@ class FileProcessorService:
         allowed_bucket_name: str | None = None,
         allowed_region: str | None = None,
         quarantine_prefix: str = "quarantine",
+        processing_claim_ttl_seconds: int = 330,
     ) -> None:
         self._storage = file_storage
         self._metadata = metadata_repo
@@ -60,6 +67,7 @@ class FileProcessorService:
         self._allowed_bucket = allowed_bucket_name
         self._allowed_region = allowed_region
         self._quarantine_prefix = quarantine_prefix.strip("/") or "quarantine"
+        self._processing_claim_ttl_seconds = processing_claim_ttl_seconds
 
     def handle(self, event: FileEvent) -> ProcessingResult:
         """Handle an input event, preserving retry/DLQ semantics."""
@@ -83,19 +91,42 @@ class FileProcessorService:
             log.info("Duplicate input event acknowledged idempotently")
             return duplicate
 
-        try:
-            if event.event_type == EventType.FILE_UPLOADED:
-                return self._process_uploaded_file(event, result, log)
-            if event.event_type == EventType.FILE_SCANNED:
-                return self._process_scanned_file(event, result, log)
+        if event.event_type not in {EventType.FILE_UPLOADED, EventType.FILE_SCANNED}:
             log.info("Ignoring terminal processor event")
             return result.with_completion(ProcessingStatus.COMPLETED)
+
+        claim: ProcessingClaim | None = None
+        try:
+            claim = self._metadata.claim_processing(
+                event.file_id_str,
+                event.event_id_str,
+                self._processing_claim_ttl_seconds,
+            )
+            if claim is None:
+                duplicate = self._idempotent_result(event, result)
+                if duplicate is not None:
+                    log.info("Concurrent completion acknowledged idempotently")
+                    return duplicate
+                raise ProcessingClaimUnavailableError(
+                    message="Another worker owns the active processing lease",
+                    event_id=event.event_id_str,
+                    correlation_id=event.correlation_id_str,
+                    retryable=True,
+                )
+            if event.event_type == EventType.FILE_UPLOADED:
+                return self._process_uploaded_file(event, result, log, claim)
+            if event.event_type == EventType.FILE_SCANNED:
+                return self._process_scanned_file(event, result, log, claim)
+            raise AssertionError("Actionable event type was not handled")
+        except ProcessingClaimUnavailableError:
+            raise
         except NonRetryableError as error:
             self._handle_failure(
                 event,
                 error.message,
                 error.error_code,
                 retryable=False,
+                claim=claim,
             )
             raise
         except StorageError as error:
@@ -104,6 +135,7 @@ class FileProcessorService:
                 error.message,
                 "STORAGE_ERROR",
                 retryable=True,
+                claim=claim,
             )
             raise ProcessingError(
                 message=error.message,
@@ -118,6 +150,7 @@ class FileProcessorService:
                 error.message,
                 error.error_code,
                 retryable=error.retryable,
+                claim=claim,
             )
             raise
         except Exception as error:
@@ -126,6 +159,7 @@ class FileProcessorService:
                 str(error),
                 "UNEXPECTED_ERROR",
                 retryable=True,
+                claim=claim,
             )
             raise ProcessingError(
                 message=f"Unexpected error: {error}",
@@ -163,6 +197,7 @@ class FileProcessorService:
         event: FileEvent,
         result: ProcessingResult,
         log: Any,
+        claim: ProcessingClaim,
     ) -> ProcessingResult:
         self._validate_event_location(event)
         if event.file_metadata.file_size_bytes > self._max_file_size:
@@ -176,8 +211,6 @@ class FileProcessorService:
 
         timestamp = datetime.now(UTC).isoformat()
         record = self._create_metadata_record(event, timestamp)
-        record.status = ProcessingStatus.PROCESSING
-        self._metadata.save(record)
 
         content = self._storage.download(
             event.storage_location.bucket_name,
@@ -226,7 +259,7 @@ class FileProcessorService:
             storage_location=output_location,
         )
         outbox_event = OutboxEvent.from_file_event(completion)
-        self._persist_and_publish(record, completion, outbox_event)
+        self._persist_and_publish(record, completion, outbox_event, claim)
         if not analysis.is_safe:
             try:
                 # The copy and its canonical location are durable now. Deleting the
@@ -258,13 +291,14 @@ class FileProcessorService:
         event: FileEvent,
         result: ProcessingResult,
         log: Any,
+        claim: ProcessingClaim,
     ) -> ProcessingResult:
         timestamp = datetime.now(UTC).isoformat()
         record = self._create_metadata_record(event, timestamp)
         record.status = ProcessingStatus.COMPLETED
         record.processed_at = timestamp
         record.last_processed_event_id = event.event_id_str
-        self._metadata.save(record)
+        self._metadata.save(record, claim=claim)
         log.info("External scan event recorded")
         return result.with_completion(ProcessingStatus.COMPLETED)
 
@@ -364,11 +398,12 @@ class FileProcessorService:
         record: MetadataRecord,
         event: FileEvent,
         outbox_event: OutboxEvent,
+        claim: ProcessingClaim,
     ) -> None:
         if self._use_outbox and self._outbox is not None:
-            self._outbox.save_with_outbox(record, outbox_event)
+            self._outbox.save_with_outbox(record, outbox_event, claim=claim)
             return
-        self._metadata.save(record)
+        self._metadata.save(record, claim=claim)
         self._publisher.publish(event)
 
     def _handle_failure(
@@ -378,8 +413,11 @@ class FileProcessorService:
         error_code: str,
         *,
         retryable: bool,
+        claim: ProcessingClaim | None,
     ) -> None:
         """Persist diagnostics atomically before allowing SQS/Lambda redrive."""
+        if claim is None:
+            return
         try:
             failed_at = datetime.now(UTC)
             record = self._create_metadata_record(event, failed_at.isoformat())
@@ -397,9 +435,12 @@ class FileProcessorService:
                     failed_at=failed_at,
                     retryable=retryable,
                 ),
+                idempotency_discriminator=(
+                    f"claim:{claim.version}:{record.error_code}:{str(retryable).lower()}"
+                ),
             )
             outbox_event = OutboxEvent.from_file_event(failure_event)
-            self._persist_and_publish(record, failure_event, outbox_event)
+            self._persist_and_publish(record, failure_event, outbox_event, claim)
         except Exception as handler_error:
             logger.exception(
                 "Failed to persist processing diagnostics",

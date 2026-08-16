@@ -10,7 +10,11 @@ import structlog
 from botocore.exceptions import ClientError
 
 from processor.adapters.outbound.aws_retry import aws_retry
-from processor.adapters.outbound.dynamodb_repo import build_metadata_update
+from processor.adapters.outbound.dynamodb_repo import (
+    apply_claim_fence,
+    build_metadata_update,
+    is_conditional_failure,
+)
 from processor.domain.exceptions import StorageError
 from processor.domain.models import (
     OUTBOX_DEFAULT_RETENTION_SECONDS,
@@ -18,6 +22,7 @@ from processor.domain.models import (
     MetadataRecord,
     OutboxEvent,
     OutboxStatus,
+    ProcessingClaim,
     outbox_shard,
 )
 from processor.ports.outbound import OutboxRepository
@@ -48,12 +53,23 @@ class DynamoDBOutboxRepository(OutboxRepository):
         self,
         record: MetadataRecord,
         outbox_event: OutboxEvent,
+        claim: ProcessingClaim | None = None,
     ) -> None:
         """Update ``FILE#id/METADATA`` and conditionally insert the outbox row."""
         update, names, values = build_metadata_update(record)
+        condition = "attribute_exists(PK) AND attribute_exists(SK)"
+        if claim is not None:
+            update, names, values, claim_condition = apply_claim_fence(
+                update,
+                names,
+                values,
+                claim,
+            )
+            condition += f" AND {claim_condition}"
         outbox_item = outbox_event.to_dynamodb_item()
         try:
             self._client.transact_write_items(
+                ClientRequestToken=outbox_event.event_id,
                 TransactItems=[
                     {
                         "Update": {
@@ -65,7 +81,7 @@ class DynamoDBOutboxRepository(OutboxRepository):
                             "UpdateExpression": update,
                             "ExpressionAttributeNames": names,
                             "ExpressionAttributeValues": values,
-                            "ConditionExpression": "attribute_exists(PK) AND attribute_exists(SK)",
+                            "ConditionExpression": condition,
                         }
                     },
                     {
@@ -77,24 +93,38 @@ class DynamoDBOutboxRepository(OutboxRepository):
                             ),
                         }
                     },
-                ]
+                ],
             )
         except ClientError as error:
             if self._is_idempotent_replay(error, outbox_event):
                 # The first transaction already inserted the canonical event. A later
                 # retry may still need to restore the current metadata state after a
                 # PROCESSING update, so apply only the idempotent metadata update.
-                self._client.update_item(
-                    TableName=self._metadata_table_name,
-                    Key={
-                        "PK": {"S": f"FILE#{record.file_id}"},
-                        "SK": {"S": "METADATA"},
-                    },
-                    UpdateExpression=update,
-                    ExpressionAttributeNames=names,
-                    ExpressionAttributeValues=values,
-                    ConditionExpression="attribute_exists(PK) AND attribute_exists(SK)",
-                )
+                try:
+                    self._client.update_item(
+                        TableName=self._metadata_table_name,
+                        Key={
+                            "PK": {"S": f"FILE#{record.file_id}"},
+                            "SK": {"S": "METADATA"},
+                        },
+                        UpdateExpression=update,
+                        ExpressionAttributeNames=names,
+                        ExpressionAttributeValues=values,
+                        ConditionExpression=condition,
+                    )
+                except ClientError as update_error:
+                    if not (
+                        claim is not None
+                        and is_conditional_failure(update_error)
+                        and self._metadata_has_result(record)
+                    ):
+                        raise StorageError(
+                            message=f"Failed to restore idempotent metadata state: {update_error}",
+                            storage_type="dynamodb",
+                            operation="conditional_update",
+                            resource=f"{self._metadata_table_name}/{record.file_id}",
+                            cause=update_error,
+                        ) from update_error
                 logger.info(
                     "Idempotent outbox replay ignored",
                     event_id=outbox_event.event_id,
@@ -108,6 +138,24 @@ class DynamoDBOutboxRepository(OutboxRepository):
                 resource=f"{self._metadata_table_name}/{record.file_id}",
                 cause=error,
             ) from error
+
+    def _metadata_has_result(self, record: MetadataRecord) -> bool:
+        try:
+            response = self._client.get_item(
+                TableName=self._metadata_table_name,
+                Key={
+                    "PK": {"S": f"FILE#{record.file_id}"},
+                    "SK": {"S": "METADATA"},
+                },
+                ConsistentRead=True,
+            )
+        except ClientError:
+            return False
+        item = response.get("Item", {})
+        return bool(
+            item.get("status", {}).get("S") == record.status.value
+            and item.get("lastProcessedEventId", {}).get("S") == record.last_processed_event_id
+        )
 
     def _is_idempotent_replay(
         self,

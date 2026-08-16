@@ -79,6 +79,12 @@ class ProcessingError(DomainError):
         self.retryable = retryable
 
 
+class ProcessingClaimUnavailableError(ProcessingError):
+    """Raised when another worker owns the live processing lease."""
+
+    error_code: str = "PROCESSING_CLAIM_UNAVAILABLE"
+
+
 class StorageError(DomainError):
     """Raised when storage operations fail (S3, DynamoDB)."""
 

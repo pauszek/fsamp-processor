@@ -8,7 +8,12 @@ import pytest
 from processor.application.file_processor import FileProcessorService
 from processor.domain.events import EventSource, EventType, FailureDetails, FileEvent
 from processor.domain.exceptions import NonRetryableError, ProcessingError, StorageError
-from processor.domain.models import FileContent, MetadataRecord, ProcessingStatus
+from processor.domain.models import (
+    FileContent,
+    MetadataRecord,
+    ProcessingClaim,
+    ProcessingStatus,
+)
 
 
 @pytest.fixture
@@ -16,6 +21,12 @@ def dependencies(sample_file_event: FileEvent) -> dict[str, MagicMock]:
     storage = MagicMock()
     metadata = MagicMock()
     metadata.get_by_id.return_value = None
+    metadata.claim_processing.return_value = ProcessingClaim(
+        event_id=sample_file_event.event_id_str,
+        token="claim-token",
+        version=1,
+        expires_at_epoch=1234567890,
+    )
     publisher = MagicMock()
     crypto = MagicMock()
     outbox = MagicMock()
@@ -64,6 +75,8 @@ def test_success_writes_canonical_completion_event(
     assert result.status == ProcessingStatus.COMPLETED
     dependencies["outbox"].save_with_outbox.assert_called_once()
     record, outbox = dependencies["outbox"].save_with_outbox.call_args.args
+    claim = dependencies["outbox"].save_with_outbox.call_args.kwargs["claim"]
+    assert claim.token == "claim-token"
     assert record.status == ProcessingStatus.COMPLETED
     assert record.last_processed_event_id == sample_file_event.event_id_str
     payload = outbox.to_sns_message()
@@ -93,6 +106,25 @@ def test_duplicate_input_does_not_redownload_or_emit(
     )
     result = build_service(dependencies).handle(sample_file_event)
     assert result.metadata["duplicate"] is True
+    dependencies["storage"].download.assert_not_called()
+    dependencies["outbox"].save_with_outbox.assert_not_called()
+
+
+def test_busy_claim_is_retried_without_overwriting_the_active_worker(
+    sample_file_event: FileEvent,
+    dependencies: dict[str, MagicMock],
+) -> None:
+    dependencies["metadata"].claim_processing.return_value = None
+
+    with pytest.raises(ProcessingError) as caught:
+        build_service(dependencies).handle(sample_file_event)
+
+    assert caught.value.error_code == "PROCESSING_CLAIM_UNAVAILABLE"
+    dependencies["metadata"].claim_processing.assert_called_once_with(
+        sample_file_event.file_id_str,
+        sample_file_event.event_id_str,
+        330,
+    )
     dependencies["storage"].download.assert_not_called()
     dependencies["outbox"].save_with_outbox.assert_not_called()
 
@@ -240,3 +272,31 @@ def test_output_event_id_is_deterministic(sample_file_event: FileEvent) -> None:
     second = sample_file_event.with_new_event_type(EventType.PROCESSING_FAILED, failure=failure)
     assert first.event_id == second.event_id
     assert first.event_id.version == 5
+
+
+def test_failure_event_id_is_scoped_to_claim_attempt(sample_file_event: FileEvent) -> None:
+    failure = FailureDetails(
+        code="STORAGE_ERROR",
+        message="temporary failure",
+        failed_at=datetime.now(UTC),
+        retryable=True,
+    )
+
+    first_attempt = sample_file_event.with_new_event_type(
+        EventType.PROCESSING_FAILED,
+        failure=failure,
+        idempotency_discriminator="claim:1:STORAGE_ERROR:True",
+    )
+    replayed_attempt = sample_file_event.with_new_event_type(
+        EventType.PROCESSING_FAILED,
+        failure=failure,
+        idempotency_discriminator="claim:1:STORAGE_ERROR:True",
+    )
+    takeover_attempt = sample_file_event.with_new_event_type(
+        EventType.PROCESSING_FAILED,
+        failure=failure,
+        idempotency_discriminator="claim:2:STORAGE_ERROR:True",
+    )
+
+    assert first_attempt.event_id == replayed_attempt.event_id
+    assert first_attempt.event_id != takeover_attempt.event_id
