@@ -44,7 +44,7 @@ jobs:
           echo "auto_deploy_dev=${auto_deploy_dev}" >> "$GITHUB_OUTPUT"
 
   call-python:
-    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@3409376a2811efe661ea848bd6b750fbddcbd2fb
+    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@33dd3dbeaf2b494826a63ec2663f98345929a2ca
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       GABRBA_SECRET: ${{ secrets.GABRBA_SECRET }}
