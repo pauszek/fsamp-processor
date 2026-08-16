@@ -4,6 +4,8 @@ ENV OPENSSL_DIR=/usr \
     OPENSSL_NO_VENDOR=1 \
     CRYPTOGRAPHY_OPENSSL_NO_VENDOR=1
 
+# Build-only AL2023 tools follow the base image repository; application dependencies are hash-pinned.
+# hadolint ignore=DL3041
 RUN dnf install -y \
         cargo \
         gcc \
@@ -21,7 +23,11 @@ WORKDIR /build
 # Hash-pinned lockfile (pip-compile --generate-hashes): reproducible,
 # tamper-evident dependency install (SR-3/SR-4). Regenerate via `make lock`.
 COPY requirements.lock .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+RUN pip install --no-cache-dir --upgrade \
+        "packaging==26.3" \
+        "pip==26.2.1" \
+        "setuptools==84.0.0" \
+        "wheel==0.48.0" && \
     pip install --no-cache-dir --require-hashes --no-binary cryptography -r requirements.lock
 
 COPY pyproject.toml .
@@ -33,12 +39,16 @@ ARG OPENSSL_FIPS_PROVIDER=certified
 ARG AL2023_SECURITY_RELEASEVER=latest
 ARG INCLUDE_LAMBDA_RIE=false
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 LABEL maintainer="Pauszek <pauszek@github.io>"
 LABEL org.opencontainers.image.title="FSAMP Processor Lambda"
 LABEL org.opencontainers.image.description="Event-driven file processor with AL2023 OpenSSL FIPS provider"
 LABEL org.opencontainers.image.version="0.1.0"
 LABEL org.opencontainers.image.source="https://github.com/pauszek/fsamp-processor"
 
+# Runtime AL2023 packages follow the security channel; Trivy scans the resulting image.
+# hadolint ignore=DL3041
 RUN dnf install -y \
         ca-certificates \
         crypto-policies-scripts \
