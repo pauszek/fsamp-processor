@@ -159,11 +159,11 @@ class MetadataRepository(ABC):
     @abstractmethod
     def claim_processing(
         self,
-        file_id: str,
+        initial_record: MetadataRecord,
         event_id: str,
         lease_seconds: int,
     ) -> ProcessingClaim | None:
-        """Atomically acquire or take over an expired processing lease."""
+        """Atomically initialize metadata and acquire or take over a processing lease."""
         ...
 
     @abstractmethod

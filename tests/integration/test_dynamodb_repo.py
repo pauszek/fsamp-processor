@@ -107,6 +107,31 @@ class TestDynamoDBMetadataRepository:
         assert retrieved.status == ProcessingStatus.FAILED
         assert retrieved.error_message == "Processing failed: timeout"
 
+    def test_claim_initializes_missing_metadata_atomically(
+        self,
+        repo: DynamoDBMetadataRepository,
+        sample_record: MetadataRecord,
+    ) -> None:
+        assert repo.get_by_id(sample_record.file_id) is None
+
+        claim = repo.claim_processing(sample_record, "event-new", lease_seconds=330)
+
+        assert claim is not None
+        initialized = repo.get_by_id(sample_record.file_id)
+        assert initialized is not None
+        assert initialized.status == ProcessingStatus.PROCESSING
+        assert initialized.correlation_id == sample_record.correlation_id
+        assert initialized.original_filename == sample_record.original_filename
+        assert initialized.object_key == sample_record.object_key
+
+        sample_record.status = ProcessingStatus.COMPLETED
+        sample_record.last_processed_event_id = "event-new"
+        repo.save(sample_record, claim=claim)
+        completed = repo.get_by_id(sample_record.file_id)
+        assert completed is not None
+        assert completed.status == ProcessingStatus.COMPLETED
+        assert completed.last_processed_event_id == "event-new"
+
     def test_claim_takeover_fences_the_expired_worker(
         self,
         repo: DynamoDBMetadataRepository,
@@ -115,9 +140,9 @@ class TestDynamoDBMetadataRepository:
         localstack_table_name: str,
     ) -> None:
         repo.save(sample_record)
-        first = repo.claim_processing(sample_record.file_id, "event-1", lease_seconds=330)
+        first = repo.claim_processing(sample_record, "event-1", lease_seconds=330)
         assert first is not None
-        assert repo.claim_processing(sample_record.file_id, "event-1", lease_seconds=330) is None
+        assert repo.claim_processing(sample_record, "event-1", lease_seconds=330) is None
 
         localstack_dynamodb_client.update_item(
             TableName=localstack_table_name,
@@ -128,7 +153,7 @@ class TestDynamoDBMetadataRepository:
             UpdateExpression="SET processorClaimExpiresAt = :expired",
             ExpressionAttributeValues={":expired": {"N": "0"}},
         )
-        takeover = repo.claim_processing(sample_record.file_id, "event-1", lease_seconds=330)
+        takeover = repo.claim_processing(sample_record, "event-1", lease_seconds=330)
         assert takeover is not None
         assert takeover.version == first.version + 1
         assert takeover.token != first.token
@@ -162,7 +187,7 @@ class TestDynamoDBMetadataRepository:
         sample_record.file_id = sample_file_event.file_id_str
         repo.save(sample_record)
         first = repo.claim_processing(
-            sample_record.file_id,
+            sample_record,
             sample_file_event.event_id_str,
             lease_seconds=330,
         )
@@ -178,7 +203,7 @@ class TestDynamoDBMetadataRepository:
             ExpressionAttributeValues={":expired": {"N": "0"}},
         )
         takeover = repo.claim_processing(
-            sample_record.file_id,
+            sample_record,
             sample_file_event.event_id_str,
             lease_seconds=330,
         )

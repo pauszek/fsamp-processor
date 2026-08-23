@@ -120,11 +120,14 @@ def test_busy_claim_is_retried_without_overwriting_the_active_worker(
         build_service(dependencies).handle(sample_file_event)
 
     assert caught.value.error_code == "PROCESSING_CLAIM_UNAVAILABLE"
-    dependencies["metadata"].claim_processing.assert_called_once_with(
-        sample_file_event.file_id_str,
-        sample_file_event.event_id_str,
-        330,
-    )
+    dependencies["metadata"].claim_processing.assert_called_once()
+    initial_record, event_id, lease_seconds = dependencies[
+        "metadata"
+    ].claim_processing.call_args.args
+    assert initial_record.file_id == sample_file_event.file_id_str
+    assert initial_record.original_filename == (sample_file_event.file_metadata.original_filename)
+    assert event_id == sample_file_event.event_id_str
+    assert lease_seconds == 330
     dependencies["storage"].download.assert_not_called()
     dependencies["outbox"].save_with_outbox.assert_not_called()
 

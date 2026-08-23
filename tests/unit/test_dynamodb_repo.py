@@ -39,6 +39,7 @@ def repo(client: MagicMock) -> DynamoDBMetadataRepository:
 def test_claim_processing_is_atomic_and_returns_fence(
     repo: DynamoDBMetadataRepository,
     client: MagicMock,
+    record: MetadataRecord,
 ) -> None:
     client.update_item.return_value = {
         "Attributes": {
@@ -47,12 +48,19 @@ def test_claim_processing_is_atomic_and_returns_fence(
         }
     }
 
-    claim = repo.claim_processing("file-123", "event-456", lease_seconds=330)
+    claim = repo.claim_processing(record, "event-456", lease_seconds=330)
 
     assert claim is not None
     assert claim.event_id == "event-456"
     assert claim.version == 7
     request = client.update_item.call_args.kwargs
+    assert request["Key"] == {
+        "PK": {"S": "FILE#file-123"},
+        "SK": {"S": "METADATA"},
+    }
+    assert "attribute_exists(PK)" not in request["ConditionExpression"]
+    assert "if_not_exists(#initial" in request["UpdateExpression"]
+    assert "originalFilename" in request["ExpressionAttributeNames"].values()
     assert "#claimExpiresAt <= :nowEpoch" in request["ConditionExpression"]
     assert "#lastProcessedEventId <> :eventId" in request["ConditionExpression"]
     assert request["ExpressionAttributeNames"]["#claimExpiresAt"] == ("processorClaimExpiresAt")
@@ -62,13 +70,14 @@ def test_claim_processing_is_atomic_and_returns_fence(
 def test_claim_processing_reports_contention_without_overwriting(
     repo: DynamoDBMetadataRepository,
     client: MagicMock,
+    record: MetadataRecord,
 ) -> None:
     client.update_item.side_effect = ClientError(
         {"Error": {"Code": "ConditionalCheckFailedException", "Message": "busy"}},
         "UpdateItem",
     )
 
-    assert repo.claim_processing("file-123", "event-456", lease_seconds=330) is None
+    assert repo.claim_processing(record, "event-456", lease_seconds=330) is None
 
 
 def test_claimed_save_requires_matching_token_and_version(

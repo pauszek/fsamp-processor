@@ -153,35 +153,58 @@ class DynamoDBMetadataRepository(MetadataRepository):
     @aws_retry()
     def claim_processing(
         self,
-        file_id: str,
+        initial_record: MetadataRecord,
         event_id: str,
         lease_seconds: int,
     ) -> ProcessingClaim | None:
-        """Acquire a token-fenced lease or take over a lease that has expired."""
+        """Initialize metadata and acquire or take over a token-fenced lease."""
         now = datetime.now(UTC)
         now_epoch = int(now.timestamp())
         expires_at_epoch = now_epoch + lease_seconds
         token = str(uuid4())
+        initial_names: dict[str, str] = {}
+        initial_values: dict[str, dict[str, Any]] = {}
+        initial_assignments: list[str] = []
+        for index, (attribute, value) in enumerate(initial_record.to_dynamodb_item().items()):
+            if attribute in {
+                "PK",
+                "SK",
+                "status",
+                "updatedAt",
+                "errorMessage",
+                "errorCode",
+                "lastProcessedEventId",
+            }:
+                continue
+            name = f"#initial{index}"
+            placeholder = f":initial{index}"
+            initial_names[name] = attribute
+            initial_values[placeholder] = value
+            initial_assignments.append(f"{name} = if_not_exists({name}, {placeholder})")
+
         try:
             response = self._client.update_item(
                 TableName=self._table_name,
-                Key={"PK": {"S": f"FILE#{file_id}"}, "SK": {"S": "METADATA"}},
+                Key={
+                    "PK": {"S": f"FILE#{initial_record.file_id}"},
+                    "SK": {"S": "METADATA"},
+                },
                 UpdateExpression=(
                     "SET #status = :processing, GSI1PK = :gsi, GSI1SK = :now, "
                     "updatedAt = :now, #claimToken = :claimToken, "
                     "#claimExpiresAt = :claimExpiresAt, "
                     "#claimVersion = if_not_exists(#claimVersion, :zero) + :one, "
-                    "#processingEventId = :eventId "
+                    "#processingEventId = :eventId, " + ", ".join(initial_assignments) + " "
                     "REMOVE errorMessage, errorCode"
                 ),
                 ConditionExpression=(
-                    "attribute_exists(PK) AND attribute_exists(SK) "
-                    "AND (attribute_not_exists(#lastProcessedEventId) "
+                    "(attribute_not_exists(#lastProcessedEventId) "
                     "OR #lastProcessedEventId <> :eventId) "
                     "AND (attribute_not_exists(#claimToken) "
                     "OR #claimExpiresAt <= :nowEpoch)"
                 ),
                 ExpressionAttributeNames={
+                    **initial_names,
                     "#status": "status",
                     "#lastProcessedEventId": "lastProcessedEventId",
                     "#claimToken": _PROCESSOR_CLAIM_TOKEN_ATTRIBUTE,
@@ -190,6 +213,7 @@ class DynamoDBMetadataRepository(MetadataRepository):
                     "#processingEventId": _PROCESSING_EVENT_ID,
                 },
                 ExpressionAttributeValues={
+                    **initial_values,
                     ":processing": {"S": ProcessingStatus.PROCESSING.value},
                     ":gsi": {"S": f"STATUS#{ProcessingStatus.PROCESSING.value}"},
                     ":now": {"S": now.isoformat()},
@@ -216,7 +240,7 @@ class DynamoDBMetadataRepository(MetadataRepository):
                 message=f"Failed to claim metadata record: {error}",
                 storage_type="dynamodb",
                 operation="conditional_update",
-                resource=f"{self._table_name}/{file_id}",
+                resource=f"{self._table_name}/{initial_record.file_id}",
                 cause=error,
             ) from error
 
@@ -325,8 +349,7 @@ class DynamoDBMetadataRepository(MetadataRepository):
                 TableName=self._table_name,
                 Key={"PK": {"S": f"FILE#{file_id}"}, "SK": {"S": "METADATA"}},
                 UpdateExpression=(
-                    "SET retryCount = if_not_exists(retryCount, :zero) + :inc, "
-                    "updatedAt = :updated"
+                    "SET retryCount = if_not_exists(retryCount, :zero) + :inc, updatedAt = :updated"
                 ),
                 ExpressionAttributeValues={
                     ":zero": {"N": "0"},

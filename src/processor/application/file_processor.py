@@ -97,8 +97,9 @@ class FileProcessorService:
 
         claim: ProcessingClaim | None = None
         try:
+            initial_record = self._create_metadata_record(event, started_at.isoformat())
             claim = self._metadata.claim_processing(
-                event.file_id_str,
+                initial_record,
                 event.event_id_str,
                 self._processing_claim_ttl_seconds,
             )
@@ -391,6 +392,7 @@ class FileProcessorService:
             is_encrypted=event.security_context.is_encrypted,
             encryption_algorithm=event.security_context.encryption_algorithm,
             kms_key_id=event.security_context.kms_key_id,
+            created_at=timestamp,
         )
 
     def _persist_and_publish(
