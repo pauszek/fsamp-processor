@@ -28,7 +28,7 @@ def test_load_libcrypto_uses_discovered_library(monkeypatch: pytest.MonkeyPatch)
         lambda name: loaded_names.append(name) or fake_libcrypto,
     )
 
-    assert openssl_runtime._load_libcrypto() is fake_libcrypto
+    assert openssl_runtime.load_libcrypto() is fake_libcrypto
     assert loaded_names == ["crypto-test"]
 
 
@@ -42,7 +42,7 @@ def test_load_libcrypto_uses_openssl_3_fallback(monkeypatch: pytest.MonkeyPatch)
         lambda name: loaded_names.append(name) or object(),
     )
 
-    assert openssl_runtime._load_libcrypto() is not None
+    assert openssl_runtime.load_libcrypto() is not None
     assert loaded_names == ["libcrypto.so.3"]
 
 
@@ -57,7 +57,7 @@ def test_load_libcrypto_returns_none_when_library_cannot_load(
 
     monkeypatch.setattr(openssl_runtime.ctypes, "CDLL", raise_os_error)
 
-    assert openssl_runtime._load_libcrypto() is None
+    assert openssl_runtime.load_libcrypto() is None
 
 
 def test_load_libcrypto_skips_non_linux_platform(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -68,23 +68,19 @@ def test_load_libcrypto_skips_non_linux_platform(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(openssl_runtime.ctypes, "CDLL", fail_if_called)
 
-    assert openssl_runtime._load_libcrypto() is None
+    assert openssl_runtime.load_libcrypto() is None
 
 
 def test_initialize_returns_none_when_libcrypto_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(openssl_runtime, "_load_libcrypto", lambda: None)
+    monkeypatch.setattr(openssl_runtime, "load_libcrypto", lambda: None)
 
     assert openssl_runtime.initialize_openssl_config() is None
 
 
-def test_initialize_returns_none_when_init_symbol_is_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(openssl_runtime, "_load_libcrypto", lambda: object())
-
-    assert openssl_runtime.initialize_openssl_config() is None
+def test_initialize_returns_none_when_init_symbol_is_unavailable() -> None:
+    assert openssl_runtime.initialize_openssl_config(object()) is None
 
 
 @pytest.mark.parametrize(("return_value", "expected"), [(0, False), (1, True)])
@@ -95,7 +91,7 @@ def test_initialize_loads_openssl_configuration(
 ) -> None:
     init_crypto = FakeOpenSslFunction(return_value)
     fake_libcrypto = type("FakeLibCrypto", (), {"OPENSSL_init_crypto": init_crypto})()
-    monkeypatch.setattr(openssl_runtime, "_load_libcrypto", lambda: fake_libcrypto)
+    monkeypatch.setattr(openssl_runtime, "load_libcrypto", lambda: fake_libcrypto)
 
     assert openssl_runtime.initialize_openssl_config() is expected
     assert init_crypto.argtypes == [ctypes.c_uint64, ctypes.c_void_p]

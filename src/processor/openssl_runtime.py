@@ -8,7 +8,7 @@ from typing import cast
 OPENSSL_INIT_LOAD_CONFIG = 0x00000040
 
 
-def _load_libcrypto() -> ctypes.CDLL | None:
+def load_libcrypto() -> ctypes.CDLL | None:
     if sys.platform != "linux":
         return None
 
@@ -19,7 +19,13 @@ def _load_libcrypto() -> ctypes.CDLL | None:
         return None
 
 
-def _initialize_openssl_config(libcrypto: object) -> bool | None:
+def initialize_openssl_config(libcrypto: object | None = None) -> bool | None:
+    """Load the process OpenSSL configuration before crypto-capable dependencies."""
+    if libcrypto is None:
+        libcrypto = load_libcrypto()
+    if libcrypto is None:
+        return None
+
     init_crypto = getattr(libcrypto, "OPENSSL_init_crypto", None)
     if init_crypto is None:
         return None
@@ -27,11 +33,3 @@ def _initialize_openssl_config(libcrypto: object) -> bool | None:
     init_crypto.argtypes = [ctypes.c_uint64, ctypes.c_void_p]
     init_crypto.restype = ctypes.c_int
     return cast(int, init_crypto(OPENSSL_INIT_LOAD_CONFIG, None)) == 1
-
-
-def initialize_openssl_config() -> bool | None:
-    """Load the process OpenSSL configuration before crypto-capable dependencies."""
-    libcrypto = _load_libcrypto()
-    if libcrypto is None:
-        return None
-    return _initialize_openssl_config(libcrypto)

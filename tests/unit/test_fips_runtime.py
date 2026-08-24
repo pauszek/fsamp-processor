@@ -48,7 +48,7 @@ def test_enforce_fips_allows_required_enabled_mode(monkeypatch: pytest.MonkeyPat
 def test_libcrypto_check_returns_none_when_library_cannot_load(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(fips, "_load_libcrypto", lambda: None)
+    monkeypatch.setattr(fips, "load_libcrypto", lambda: None)
 
     assert fips._is_fips_enabled_via_libcrypto() is None
 
@@ -56,7 +56,7 @@ def test_libcrypto_check_returns_none_when_library_cannot_load(
 def test_libcrypto_check_returns_none_when_symbols_are_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(fips, "_load_libcrypto", lambda: object())
+    monkeypatch.setattr(fips, "load_libcrypto", lambda: object())
 
     assert fips._is_fips_enabled_via_libcrypto() is None
 
@@ -69,7 +69,7 @@ def test_libcrypto_check_returns_none_when_initialization_symbol_is_missing(
         (),
         {"EVP_default_properties_is_fips_enabled": FakeOpenSslFunction(1)},
     )()
-    monkeypatch.setattr(fips, "_load_libcrypto", lambda: fake_libcrypto)
+    monkeypatch.setattr(fips, "load_libcrypto", lambda: fake_libcrypto)
 
     assert fips._is_fips_enabled_via_libcrypto() is None
 
@@ -85,7 +85,7 @@ def test_libcrypto_check_returns_false_when_openssl_init_fails(
             "EVP_default_properties_is_fips_enabled": FakeOpenSslFunction(1),
         },
     )()
-    monkeypatch.setattr(fips, "_load_libcrypto", lambda: fake_libcrypto)
+    monkeypatch.setattr(fips, "load_libcrypto", lambda: fake_libcrypto)
 
     assert fips._is_fips_enabled_via_libcrypto() is False
 
@@ -101,7 +101,7 @@ def test_libcrypto_check_returns_default_property_status(
             "EVP_default_properties_is_fips_enabled": FakeOpenSslFunction(1),
         },
     )()
-    monkeypatch.setattr(fips, "_load_libcrypto", lambda: fake_libcrypto)
+    monkeypatch.setattr(fips, "load_libcrypto", lambda: fake_libcrypto)
 
     assert fips._is_fips_enabled_via_libcrypto() is True
 

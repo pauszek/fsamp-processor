@@ -8,7 +8,7 @@ from typing import cast
 import structlog
 from cryptography.hazmat.bindings.openssl.binding import Binding
 
-from processor.openssl_runtime import _initialize_openssl_config, _load_libcrypto
+from processor.openssl_runtime import initialize_openssl_config, load_libcrypto
 
 logger = structlog.get_logger(__name__)
 
@@ -21,7 +21,7 @@ def _is_fips_enabled_via_libcrypto() -> bool | None:
     Binding().lib, so this path verifies the same libcrypto used by Python ssl
     and the source-built cryptography extension in the Lambda image.
     """
-    libcrypto = _load_libcrypto()
+    libcrypto = load_libcrypto()
     if libcrypto is None:
         logger.debug("Unable to load libcrypto for FIPS check")
         return None
@@ -33,7 +33,7 @@ def _is_fips_enabled_via_libcrypto() -> bool | None:
     is_fips_enabled.argtypes = [ctypes.c_void_p]
     is_fips_enabled.restype = ctypes.c_int
 
-    initialization_result = _initialize_openssl_config(libcrypto)
+    initialization_result = initialize_openssl_config(libcrypto)
     if initialization_result is None:
         return None
     if not initialization_result:
