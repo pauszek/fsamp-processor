@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
 
+env:
+  CODE_CI_WORKFLOW_SHA: fd553ff9598c1d8548cb808b15b967c1610ccfc4
+
 jobs:
   params:
     name: Load Deployment Settings
@@ -14,6 +17,19 @@ jobs:
       auto_deploy_dev: ${{ steps.params.outputs.auto_deploy_dev }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Verify deployment provenance pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${CODE_CI_WORKFLOW_SHA}" =~ ^[a-f0-9]{40}$ ]]
+          grep -Fq \
+            "uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@${CODE_CI_WORKFLOW_SHA}" \
+            .github/workflows/ci.yml
+          if grep -Eq -- '--arg code_ci_workflow_sha "[a-f0-9]{40}"' .github/workflows/ci.yml; then
+            echo "::error::Deployment provenance must use CODE_CI_WORKFLOW_SHA"
+            exit 1
+          fi
 
       - name: Load params
         id: params
@@ -104,7 +120,7 @@ jobs:
 
           jq -n \
             --arg processor_source_image "${{ steps.image.outputs.source }}" \
-            --arg code_ci_workflow_sha "3409376a2811efe661ea848bd6b750fbddcbd2fb" \
+            --arg code_ci_workflow_sha "${CODE_CI_WORKFLOW_SHA}" \
             --arg image_tag "${image_tag}" \
             '{
               event_type: "deploy-dev",
