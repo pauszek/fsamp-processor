@@ -3,15 +3,14 @@ Utilities for validating OpenSSL FIPS mode at runtime.
 """
 
 import ctypes
-import ctypes.util
 from typing import cast
 
 import structlog
 from cryptography.hazmat.bindings.openssl.binding import Binding
 
-logger = structlog.get_logger(__name__)
+from processor.openssl_runtime import _initialize_openssl_config, _load_libcrypto
 
-_OPENSSL_INIT_LOAD_CONFIG = 0x00000040
+logger = structlog.get_logger(__name__)
 
 
 def _is_fips_enabled_via_libcrypto() -> bool | None:
@@ -22,25 +21,22 @@ def _is_fips_enabled_via_libcrypto() -> bool | None:
     Binding().lib, so this path verifies the same libcrypto used by Python ssl
     and the source-built cryptography extension in the Lambda image.
     """
-    library_name = ctypes.util.find_library("crypto") or "libcrypto.so.3"
-
-    try:
-        libcrypto = ctypes.CDLL(library_name)
-    except OSError as exc:
-        logger.debug("Unable to load libcrypto for FIPS check", error=str(exc))
+    libcrypto = _load_libcrypto()
+    if libcrypto is None:
+        logger.debug("Unable to load libcrypto for FIPS check")
         return None
 
-    init_crypto = getattr(libcrypto, "OPENSSL_init_crypto", None)
     is_fips_enabled = getattr(libcrypto, "EVP_default_properties_is_fips_enabled", None)
-    if init_crypto is None or is_fips_enabled is None:
+    if is_fips_enabled is None:
         return None
 
-    init_crypto.argtypes = [ctypes.c_uint64, ctypes.c_void_p]
-    init_crypto.restype = ctypes.c_int
     is_fips_enabled.argtypes = [ctypes.c_void_p]
     is_fips_enabled.restype = ctypes.c_int
 
-    if init_crypto(_OPENSSL_INIT_LOAD_CONFIG, None) != 1:
+    initialization_result = _initialize_openssl_config(libcrypto)
+    if initialization_result is None:
+        return None
+    if not initialization_result:
         return False
 
     return cast(int, is_fips_enabled(None)) == 1

@@ -3,7 +3,14 @@
 Application entry point with dependency injection and graceful shutdown.
 """
 
+# OpenSSL configuration must load before crypto-capable third-party modules.
+# ruff: noqa: E402
+
 import sys
+
+from processor.openssl_runtime import initialize_openssl_config
+
+initialize_openssl_config()
 
 import structlog
 

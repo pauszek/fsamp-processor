@@ -21,6 +21,14 @@ import json
 import time
 from typing import Any, cast
 
+# isort: off
+# OpenSSL configuration must load before crypto-capable third-party modules.
+# ruff: noqa: E402
+from processor.openssl_runtime import initialize_openssl_config
+
+initialize_openssl_config()
+# isort: on
+
 from aws_lambda_powertools import Logger, Metrics, Tracer
 from aws_lambda_powertools.metrics import MetricUnit, single_metric
 from aws_lambda_powertools.utilities.batch import (
