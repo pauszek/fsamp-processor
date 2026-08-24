@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  CODE_CI_WORKFLOW_SHA: 3d3ae3dcef70ca1829e285c8e76f22f89cd54994
+  CODE_CI_WORKFLOW_SHA: 2c71bf26d1e87c7de3bfef881e01d13455e74708
 
 jobs:
   params:
@@ -60,7 +60,7 @@ jobs:
           echo "auto_deploy_dev=${auto_deploy_dev}" >> "$GITHUB_OUTPUT"
 
   call-python:
-    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@3d3ae3dcef70ca1829e285c8e76f22f89cd54994
+    uses: pauszek/fsamp-code-ci/.github/workflows/build-python.yml@2c71bf26d1e87c7de3bfef881e01d13455e74708
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       GABRBA_SECRET: ${{ secrets.GABRBA_SECRET }}
