@@ -52,7 +52,6 @@ dev = [
     "jsonschema>=4.25.0",
     "pip-audit>=2.10.0",
     "cyclonedx-bom>=7.3.0",
-    "safety>=3.7.0",
     "bandit>=1.9.4",
     "testcontainers[localstack]>=4.14.2",
 ]
