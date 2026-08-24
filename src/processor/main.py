@@ -96,6 +96,7 @@ def create_application(settings: Settings) -> SQSConsumer:
         allowed_bucket_name=settings.s3_bucket_name,
         allowed_region=settings.aws_region,
         quarantine_prefix=settings.quarantine_prefix,
+        processing_claim_ttl_seconds=settings.processing_claim_ttl_seconds,
     )
 
     consumer = SQSConsumer(

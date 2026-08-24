@@ -81,6 +81,16 @@ def test_json_logging_flag() -> None:
     assert Settings(log_format="console").use_json_logging is False
 
 
+@pytest.mark.parametrize("ttl", [29, 7201])
+def test_processing_claim_ttl_rejects_unsafe_bounds(ttl: int) -> None:
+    with pytest.raises(ValueError, match="processing_claim_ttl_seconds"):
+        Settings(processing_claim_ttl_seconds=ttl)
+
+
+def test_processing_claim_ttl_defaults_beyond_lambda_timeout() -> None:
+    assert Settings().processing_claim_ttl_seconds == 330
+
+
 def test_get_settings_returns_cached_instance() -> None:
     get_settings.cache_clear()
 

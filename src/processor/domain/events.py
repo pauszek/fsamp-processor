@@ -393,6 +393,7 @@ class FileEvent(BaseModel):
         processing_result: ProcessingResultDetails | None = None,
         failure: FailureDetails | None = None,
         storage_location: StorageLocation | None = None,
+        idempotency_discriminator: str | None = None,
     ) -> FileEvent:
         """Create a validated output event with a stable UUIDv5 id.
 
@@ -400,10 +401,10 @@ class FileEvent(BaseModel):
         observable as the same output event, which is required for idempotent
         at-least-once processing.
         """
-        output_event_id = uuid5(
-            NAMESPACE_URL,
-            f"urn:fsamp:event:{self.event_id_str}:{event_type.value}",
-        )
+        event_occurrence = f"urn:fsamp:event:{self.event_id_str}:{event_type.value}"
+        if idempotency_discriminator is not None:
+            event_occurrence += f":{idempotency_discriminator}"
+        output_event_id = uuid5(NAMESPACE_URL, event_occurrence)
         data: dict[str, Any] = self.model_dump()
         data.update(
             {

@@ -11,6 +11,7 @@ from processor.domain.models import (
     FileContent,
     MetadataRecord,
     OutboxEvent,
+    ProcessingClaim,
 )
 
 
@@ -139,7 +140,11 @@ class MetadataRepository(ABC):
     """
 
     @abstractmethod
-    def save(self, record: MetadataRecord) -> None:
+    def save(
+        self,
+        record: MetadataRecord,
+        claim: ProcessingClaim | None = None,
+    ) -> None:
         """
         Save a metadata record.
 
@@ -149,6 +154,16 @@ class MetadataRepository(ABC):
         Raises:
             StorageError: If save fails.
         """
+        ...
+
+    @abstractmethod
+    def claim_processing(
+        self,
+        initial_record: MetadataRecord,
+        event_id: str,
+        lease_seconds: int,
+    ) -> ProcessingClaim | None:
+        """Atomically initialize metadata and acquire or take over a processing lease."""
         ...
 
     @abstractmethod
@@ -433,6 +448,7 @@ class OutboxRepository(ABC):
         self,
         record: MetadataRecord,
         outbox_event: OutboxEvent,
+        claim: ProcessingClaim | None = None,
     ) -> None:
         """
         Save metadata record and outbox event in a single transaction.

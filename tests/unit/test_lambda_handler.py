@@ -27,6 +27,7 @@ class TestGetFileProcessor:
         mock_settings.sns_topic_arn = "arn:aws:sns:us-west-2:123456789012:test"
         mock_settings.outbox_table_name = None
         mock_settings.max_file_size_bytes = 100 * 1024 * 1024
+        mock_settings.processing_claim_ttl_seconds = 330
 
         with (
             patch.object(handler_module, "get_settings", return_value=mock_settings),
@@ -47,6 +48,7 @@ class TestGetFileProcessor:
             assert result == mock_service
             mock_factory_class.assert_called_once()
             mock_service_class.assert_called_once()
+            assert mock_service_class.call_args.kwargs["processing_claim_ttl_seconds"] == 330
 
     def test_get_file_processor_returns_cached(self) -> None:
         mock_service = MagicMock()
@@ -71,6 +73,7 @@ class TestGetFileProcessor:
         mock_settings.sns_topic_arn = "arn:aws:sns:us-west-2:123456789012:test"
         mock_settings.outbox_table_name = "outbox-table"
         mock_settings.max_file_size_bytes = 100 * 1024 * 1024
+        mock_settings.processing_claim_ttl_seconds = 330
 
         with (
             patch.object(handler_module, "get_settings", return_value=mock_settings),
@@ -93,6 +96,7 @@ class TestGetFileProcessor:
 
             assert result == mock_service
             mock_outbox_class.assert_called_once()
+            assert mock_service_class.call_args.kwargs["processing_claim_ttl_seconds"] == 330
 
 
 class TestRecordHandlerLogic:

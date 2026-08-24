@@ -9,7 +9,12 @@ from botocore.exceptions import ClientError
 from processor.adapters.outbound.outbox_repo import DynamoDBOutboxRepository
 from processor.domain.events import EventType, FileEvent, ProcessingResultDetails
 from processor.domain.exceptions import StorageError
-from processor.domain.models import MetadataRecord, OutboxEvent, ProcessingStatus
+from processor.domain.models import (
+    MetadataRecord,
+    OutboxEvent,
+    ProcessingClaim,
+    ProcessingStatus,
+)
 
 
 @pytest.fixture
@@ -52,11 +57,31 @@ def outbox(sample_file_event: FileEvent) -> OutboxEvent:
     return OutboxEvent.from_file_event(completed)
 
 
+@pytest.fixture
+def claim(sample_file_event: FileEvent) -> ProcessingClaim:
+    return ProcessingClaim(
+        event_id=sample_file_event.event_id_str,
+        token="claim-token",
+        version=3,
+        expires_at_epoch=1234567890,
+    )
+
+
 def transaction_cancelled() -> ClientError:
     return ClientError(
         {
             "Error": {"Code": "TransactionCanceledException", "Message": "cancelled"},
             "CancellationReasons": [{"Code": "None"}, {"Code": "ConditionalCheckFailed"}],
+        },
+        "TransactWriteItems",
+    )
+
+
+def internal_server_error() -> ClientError:
+    return ClientError(
+        {
+            "Error": {"Code": "InternalServerError", "Message": "retry"},
+            "ResponseMetadata": {"HTTPStatusCode": 500},
         },
         "TransactWriteItems",
     )
@@ -69,13 +94,46 @@ def test_save_updates_shared_metadata_and_conditionally_puts_event(
     outbox: OutboxEvent,
 ) -> None:
     repo.save_with_outbox(record, outbox)
-    transaction = client.transact_write_items.call_args.kwargs["TransactItems"]
+    request = client.transact_write_items.call_args.kwargs
+    assert request["ClientRequestToken"] == outbox.event_id
+    transaction = request["TransactItems"]
     metadata_update = transaction[0]["Update"]
     event_put = transaction[1]["Put"]
     assert metadata_update["Key"]["SK"] == {"S": "METADATA"}
     assert "attribute_exists(PK)" in metadata_update["ConditionExpression"]
     assert event_put["Item"]["PK"] == {"S": outbox.outbox_partition}
     assert "attribute_not_exists(PK)" in event_put["ConditionExpression"]
+
+
+def test_transient_retry_reuses_identical_idempotency_request(
+    repo: DynamoDBOutboxRepository,
+    client: MagicMock,
+    record: MetadataRecord,
+    outbox: OutboxEvent,
+) -> None:
+    client.transact_write_items.side_effect = [internal_server_error(), {}]
+
+    repo.save_with_outbox(record, outbox)
+
+    assert client.transact_write_items.call_count == 2
+    first_request, second_request = client.transact_write_items.call_args_list
+    assert first_request.kwargs == second_request.kwargs
+
+
+def test_claimed_transaction_is_fenced_and_releases_the_lease(
+    repo: DynamoDBOutboxRepository,
+    client: MagicMock,
+    record: MetadataRecord,
+    outbox: OutboxEvent,
+    claim: ProcessingClaim,
+) -> None:
+    repo.save_with_outbox(record, outbox, claim=claim)
+
+    metadata_update = client.transact_write_items.call_args.kwargs["TransactItems"][0]["Update"]
+    assert "#claimToken = :claimToken" in metadata_update["ConditionExpression"]
+    assert "#claimVersion = :claimVersion" in metadata_update["ConditionExpression"]
+    assert "REMOVE #claimToken" in metadata_update["UpdateExpression"]
+    assert metadata_update["ExpressionAttributeNames"]["#claimToken"] == ("processorClaimToken")
 
 
 def test_duplicate_transaction_is_idempotent_and_restores_metadata_state(

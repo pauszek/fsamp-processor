@@ -58,6 +58,16 @@ class OutboxEventType(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class ProcessingClaim:
+    """Token-fenced lease for one processor attempt."""
+
+    event_id: str
+    token: str
+    version: int
+    expires_at_epoch: int
+
+
+@dataclass(frozen=True, slots=True)
 class ProcessingResult:
     """
     Result of processing a single file.

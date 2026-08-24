@@ -131,6 +131,10 @@ class TestCreateApplication:
         mock_processor.assert_called_once()
         assert mock_processor.call_args.kwargs["outbox_repo"] == mock_outbox_repo.return_value
         assert mock_processor.call_args.kwargs["use_outbox_pattern"] is True
+        assert (
+            mock_processor.call_args.kwargs["processing_claim_ttl_seconds"]
+            == settings.processing_claim_ttl_seconds
+        )
 
     @patch("processor.main.AWSClientFactory")
     def test_create_application_connectivity_failure(

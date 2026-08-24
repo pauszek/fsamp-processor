@@ -1,9 +1,12 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
 from processor.adapters.outbound.dynamodb_repo import DynamoDBMetadataRepository
-from processor.domain.models import MetadataRecord, ProcessingStatus
+from processor.adapters.outbound.outbox_repo import DynamoDBOutboxRepository
+from processor.domain.events import EventType, FileEvent, ProcessingResultDetails
+from processor.domain.exceptions import StorageError
+from processor.domain.models import MetadataRecord, OutboxEvent, ProcessingStatus
 
 pytestmark = pytest.mark.integration
 
@@ -103,6 +106,145 @@ class TestDynamoDBMetadataRepository:
         assert retrieved is not None
         assert retrieved.status == ProcessingStatus.FAILED
         assert retrieved.error_message == "Processing failed: timeout"
+
+    def test_claim_initializes_missing_metadata_atomically(
+        self,
+        repo: DynamoDBMetadataRepository,
+        sample_record: MetadataRecord,
+    ) -> None:
+        assert repo.get_by_id(sample_record.file_id) is None
+
+        claim = repo.claim_processing(sample_record, "event-new", lease_seconds=330)
+
+        assert claim is not None
+        initialized = repo.get_by_id(sample_record.file_id)
+        assert initialized is not None
+        assert initialized.status == ProcessingStatus.PROCESSING
+        assert initialized.correlation_id == sample_record.correlation_id
+        assert initialized.original_filename == sample_record.original_filename
+        assert initialized.object_key == sample_record.object_key
+
+        sample_record.status = ProcessingStatus.COMPLETED
+        sample_record.last_processed_event_id = "event-new"
+        repo.save(sample_record, claim=claim)
+        completed = repo.get_by_id(sample_record.file_id)
+        assert completed is not None
+        assert completed.status == ProcessingStatus.COMPLETED
+        assert completed.last_processed_event_id == "event-new"
+
+    def test_claim_takeover_fences_the_expired_worker(
+        self,
+        repo: DynamoDBMetadataRepository,
+        sample_record: MetadataRecord,
+        localstack_dynamodb_client,
+        localstack_table_name: str,
+    ) -> None:
+        repo.save(sample_record)
+        first = repo.claim_processing(sample_record, "event-1", lease_seconds=330)
+        assert first is not None
+        assert repo.claim_processing(sample_record, "event-1", lease_seconds=330) is None
+
+        localstack_dynamodb_client.update_item(
+            TableName=localstack_table_name,
+            Key={
+                "PK": {"S": f"FILE#{sample_record.file_id}"},
+                "SK": {"S": "METADATA"},
+            },
+            UpdateExpression="SET processorClaimExpiresAt = :expired",
+            ExpressionAttributeValues={":expired": {"N": "0"}},
+        )
+        takeover = repo.claim_processing(sample_record, "event-1", lease_seconds=330)
+        assert takeover is not None
+        assert takeover.version == first.version + 1
+        assert takeover.token != first.token
+
+        sample_record.status = ProcessingStatus.COMPLETED
+        sample_record.last_processed_event_id = "event-1"
+        with pytest.raises(StorageError):
+            repo.save(sample_record, claim=first)
+
+        repo.save(sample_record, claim=takeover)
+        item = localstack_dynamodb_client.get_item(
+            TableName=localstack_table_name,
+            Key={
+                "PK": {"S": f"FILE#{sample_record.file_id}"},
+                "SK": {"S": "METADATA"},
+            },
+            ConsistentRead=True,
+        )["Item"]
+        assert item["status"]["S"] == ProcessingStatus.COMPLETED.value
+        assert item["lastProcessedEventId"]["S"] == "event-1"
+        assert "processorClaimToken" not in item
+
+    def test_claim_takeover_fences_metadata_and_outbox_transaction(
+        self,
+        repo: DynamoDBMetadataRepository,
+        sample_record: MetadataRecord,
+        sample_file_event: FileEvent,
+        localstack_dynamodb_client,
+        localstack_table_name: str,
+    ) -> None:
+        sample_record.file_id = sample_file_event.file_id_str
+        repo.save(sample_record)
+        first = repo.claim_processing(
+            sample_record,
+            sample_file_event.event_id_str,
+            lease_seconds=330,
+        )
+        assert first is not None
+
+        localstack_dynamodb_client.update_item(
+            TableName=localstack_table_name,
+            Key={
+                "PK": {"S": f"FILE#{sample_record.file_id}"},
+                "SK": {"S": "METADATA"},
+            },
+            UpdateExpression="SET processorClaimExpiresAt = :expired",
+            ExpressionAttributeValues={":expired": {"N": "0"}},
+        )
+        takeover = repo.claim_processing(
+            sample_record,
+            sample_file_event.event_id_str,
+            lease_seconds=330,
+        )
+        assert takeover is not None
+
+        completion = sample_file_event.with_new_event_type(
+            EventType.ANALYSIS_COMPLETED,
+            processing_result=ProcessingResultDetails(
+                is_safe=True,
+                findings=[],
+                processed_at=datetime.now(UTC),
+            ),
+        )
+        outbox_event = OutboxEvent.from_file_event(completion)
+        sample_record.status = ProcessingStatus.COMPLETED
+        sample_record.last_processed_event_id = sample_file_event.event_id_str
+        outbox_repo = DynamoDBOutboxRepository(
+            localstack_dynamodb_client,
+            localstack_table_name,
+            localstack_table_name,
+        )
+
+        with pytest.raises(StorageError):
+            outbox_repo.save_with_outbox(sample_record, outbox_event, claim=first)
+
+        outbox_key = {
+            "PK": {"S": str(outbox_event.outbox_partition)},
+            "SK": {"S": f"EVENT#{outbox_event.event_id}"},
+        }
+        assert "Item" not in localstack_dynamodb_client.get_item(
+            TableName=localstack_table_name,
+            Key=outbox_key,
+            ConsistentRead=True,
+        )
+
+        outbox_repo.save_with_outbox(sample_record, outbox_event, claim=takeover)
+        assert "Item" in localstack_dynamodb_client.get_item(
+            TableName=localstack_table_name,
+            Key=outbox_key,
+            ConsistentRead=True,
+        )
 
     def test_query_by_status(self, repo: DynamoDBMetadataRepository) -> None:
         for i, status in enumerate(
