@@ -52,20 +52,10 @@ def is_fips_endpoint_region(region: str) -> bool:
 
 
 class AWSClientFactory:
-    """
-    Factory for creating AWS service clients.
+    """Cached AWS clients with shared retry, timeout and endpoint settings.
 
-    Handles:
-    - LocalStack endpoint configuration
-    - AWS FIPS endpoints in the supported deployment region
-    - Consistent retry and timeout settings
-    - Client caching for reuse
-
-    FIPS 140-3-oriented posture:
-    - Real AWS clients are pinned to us-west-2
-    - When use_fips=True, FIPS endpoints are used in that region
-    - LocalStack/custom endpoints never use FIPS endpoint mode
-    - Formal FIPS claims remain limited to validated cryptographic modules
+    Real AWS clients stay in us-west-2 and use FIPS endpoints when use_fips is
+    set; LocalStack endpoints never do.
     """
 
     def __init__(

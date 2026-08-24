@@ -30,15 +30,6 @@ class DomainError(Exception):
     def __str__(self) -> str:
         return f"[{self.error_code}] {self.message}"
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert exception to dictionary for logging/serialization."""
-        return {
-            "error_code": self.error_code,
-            "message": self.message,
-            "context": self.context,
-            "cause": str(self.cause) if self.cause else None,
-        }
-
 
 class EventValidationError(DomainError):
     """Raised when event validation fails."""

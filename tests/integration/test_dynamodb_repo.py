@@ -69,43 +69,11 @@ class TestDynamoDBMetadataRepository:
             )
             repo.save(record)
 
-        current = repo.get_history(file_id, limit=10)
+        current = repo.get_by_id(file_id)
 
-        assert len(current) == 1
-        assert current[0].correlation_id == "corr-4"
-        assert current[0].file_size_bytes == 1004
-
-    def test_update_status(
-        self, repo: DynamoDBMetadataRepository, sample_record: MetadataRecord
-    ) -> None:
-        repo.save(sample_record)
-
-        repo.update_status(
-            file_id=sample_record.file_id,
-            timestamp=sample_record.timestamp,
-            status=ProcessingStatus.COMPLETED.value,
-        )
-
-        retrieved = repo.get_by_id(sample_record.file_id)
-        assert retrieved is not None
-        assert retrieved.status == ProcessingStatus.COMPLETED
-
-    def test_update_status_with_error(
-        self, repo: DynamoDBMetadataRepository, sample_record: MetadataRecord
-    ) -> None:
-        repo.save(sample_record)
-
-        repo.update_status(
-            file_id=sample_record.file_id,
-            timestamp=sample_record.timestamp,
-            status=ProcessingStatus.FAILED.value,
-            error_message="Processing failed: timeout",
-        )
-
-        retrieved = repo.get_by_id(sample_record.file_id)
-        assert retrieved is not None
-        assert retrieved.status == ProcessingStatus.FAILED
-        assert retrieved.error_message == "Processing failed: timeout"
+        assert current is not None
+        assert current.correlation_id == "corr-4"
+        assert current.file_size_bytes == 1004
 
     def test_claim_initializes_missing_metadata_atomically(
         self,
@@ -245,31 +213,3 @@ class TestDynamoDBMetadataRepository:
             Key=outbox_key,
             ConsistentRead=True,
         )
-
-    def test_query_by_status(self, repo: DynamoDBMetadataRepository) -> None:
-        for i, status in enumerate(
-            [
-                ProcessingStatus.PENDING,
-                ProcessingStatus.PENDING,
-                ProcessingStatus.COMPLETED,
-                ProcessingStatus.FAILED,
-            ]
-        ):
-            record = MetadataRecord(
-                file_id=f"status-query-{i}",
-                timestamp=datetime.utcnow().isoformat(),
-                correlation_id=f"corr-{i}",
-                original_filename=f"file-{i}.pdf",
-                file_size_bytes=1000,
-                mime_type="application/pdf",
-                bucket_name="bucket",
-                object_key=f"key-{i}",
-                status=status,
-            )
-            repo.save(record)
-
-        pending = repo.query_by_status(ProcessingStatus.PENDING.value)
-        assert len(pending) == 2
-
-        completed = repo.query_by_status(ProcessingStatus.COMPLETED.value)
-        assert len(completed) == 1

@@ -234,40 +234,6 @@ class S3FileStorage(FileStorage):
                 cause=e,
             ) from e
 
-    def get_presigned_url(
-        self,
-        bucket_name: str,
-        object_key: str,
-        expiration_seconds: int = 3600,
-    ) -> str:
-        """Generate a presigned URL for downloading a file."""
-        try:
-            url = self._client.generate_presigned_url(
-                "get_object",
-                Params={
-                    "Bucket": bucket_name,
-                    "Key": object_key,
-                },
-                ExpiresIn=expiration_seconds,
-            )
-            logger.debug(
-                "Generated presigned URL",
-                bucket=bucket_name,
-                key=object_key,
-                expires_in=expiration_seconds,
-            )
-            return url
-
-        except ClientError as e:
-            logger.exception("Failed to generate presigned URL")
-            raise StorageError(
-                message=f"Failed to generate presigned URL: {e}",
-                storage_type="s3",
-                operation="presigned_url",
-                resource=f"s3://{bucket_name}/{object_key}",
-                cause=e,
-            ) from e
-
     @aws_retry()
     def copy(
         self,

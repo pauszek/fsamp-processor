@@ -247,11 +247,6 @@ class Settings(BaseSettings):
         return self.environment == "local"
 
     @property
-    def is_production(self) -> bool:
-        """Check if running in production environment."""
-        return self.environment == "prod"
-
-    @property
     def should_use_fips(self) -> bool:
         """
         Check if FIPS endpoints should be used.

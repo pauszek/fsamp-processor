@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from math import ceil
 from typing import Any
 
@@ -219,14 +219,6 @@ class DynamoDBOutboxRepository(OutboxRepository):
                     break
         return sorted(events, key=lambda event: event.created_at)[:limit]
 
-    @aws_retry()
-    def get_pending_events(self, limit: int = 100) -> list[OutboxEvent]:
-        return self._get_events(OutboxStatus.PENDING, limit)
-
-    @aws_retry()
-    def get_failed_events(self, limit: int = 100) -> list[OutboxEvent]:
-        return self._get_events(OutboxStatus.FAILED, limit)
-
     def _outbox_key(
         self,
         event_id: str,
@@ -312,87 +304,3 @@ class DynamoDBOutboxRepository(OutboxRepository):
                 resource=f"{self._outbox_table_name}/{event_id}",
                 cause=client_error,
             ) from client_error
-
-    @aws_retry()
-    def delete_old_published(self, older_than_hours: int = 24) -> int:
-        """Delete published rows across all status shards, following pagination."""
-        cutoff = (datetime.now(UTC) - timedelta(hours=older_than_hours)).isoformat()
-        keys: list[dict[str, Any]] = []
-        for shard_number in range(OUTBOX_SHARD_COUNT):
-            shard = f"{shard_number:02x}"
-            start_key: dict[str, Any] | None = None
-            while True:
-                request: dict[str, Any] = {
-                    "TableName": self._outbox_table_name,
-                    "IndexName": "GSI1",
-                    "KeyConditionExpression": "GSI1PK = :status AND GSI1SK < :cutoff",
-                    "ExpressionAttributeValues": {
-                        _STATUS_VALUE: {"S": f"STATUS#PUBLISHED#{shard}"},
-                        ":cutoff": {"S": cutoff},
-                    },
-                    "ProjectionExpression": "PK, SK",
-                }
-                if start_key:
-                    request["ExclusiveStartKey"] = start_key
-                response = self._client.query(**request)
-                keys.extend(response.get("Items", []))
-                start_key = response.get("LastEvaluatedKey")
-                if not start_key:
-                    break
-
-        for offset in range(0, len(keys), 25):
-            pending = [
-                {"DeleteRequest": {"Key": {"PK": item["PK"], "SK": item["SK"]}}}
-                for item in keys[offset : offset + 25]
-            ]
-            while pending:
-                response = self._client.batch_write_item(
-                    RequestItems={self._outbox_table_name: pending}
-                )
-                pending = response.get("UnprocessedItems", {}).get(self._outbox_table_name, [])
-        return len(keys)
-
-    def update_metadata_with_outbox(
-        self,
-        file_id: str,
-        timestamp: str,
-        status: str,
-        outbox_event: OutboxEvent,
-        error_message: str | None = None,
-    ) -> None:
-        """Legacy helper retained with the shared fixed metadata key."""
-        del timestamp
-        now = datetime.now(UTC).isoformat()
-        values: dict[str, Any] = {
-            _STATUS_VALUE: {"S": status},
-            ":updated": {"S": now},
-        }
-        update = "SET #status = :status, updatedAt = :updated"
-        if error_message:
-            update += ", errorMessage = :error"
-            values[":error"] = {"S": error_message}
-        self._client.transact_write_items(
-            TransactItems=[
-                {
-                    "Update": {
-                        "TableName": self._metadata_table_name,
-                        "Key": {
-                            "PK": {"S": f"FILE#{file_id}"},
-                            "SK": {"S": "METADATA"},
-                        },
-                        "UpdateExpression": update,
-                        "ExpressionAttributeNames": {_STATUS_NAME: "status"},
-                        "ExpressionAttributeValues": values,
-                    }
-                },
-                {
-                    "Put": {
-                        "TableName": self._outbox_table_name,
-                        "Item": outbox_event.to_dynamodb_item(),
-                        "ConditionExpression": (
-                            "attribute_not_exists(PK) AND attribute_not_exists(SK)"
-                        ),
-                    }
-                },
-            ]
-        )

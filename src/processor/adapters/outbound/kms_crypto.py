@@ -316,26 +316,6 @@ class KMSCryptoProvider(CryptoProvider):
                 ) from e
             return False
 
-    def get_key_metadata(self) -> dict[str, Any]:
-        """Get metadata about the KMS key."""
-        try:
-            response = self._client.describe_key(KeyId=self._key_id)
-            metadata = response["KeyMetadata"]
-
-            return {
-                "key_id": metadata["KeyId"],
-                "arn": metadata["Arn"],
-                "key_state": metadata["KeyState"],
-                "key_usage": metadata["KeyUsage"],
-                "key_spec": metadata.get("KeySpec", "Unknown"),
-                "encryption_algorithms": metadata.get("EncryptionAlgorithms", []),
-                "creation_date": str(metadata.get("CreationDate", "")),
-            }
-
-        except ClientError as e:
-            logger.error("Failed to get key metadata", error=str(e))
-            return {}
-
 
 class LocalCryptoProvider(CryptoProvider):
     """
