@@ -5,6 +5,14 @@ Application entry point with dependency injection and graceful shutdown.
 
 import sys
 
+# isort: off
+# OpenSSL configuration must load before crypto-capable third-party modules.
+# ruff: noqa: E402
+from processor.openssl_runtime import initialize_openssl_config
+
+initialize_openssl_config()
+# isort: on
+
 import structlog
 
 from processor.adapters.inbound import SQSConsumer
