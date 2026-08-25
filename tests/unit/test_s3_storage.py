@@ -211,29 +211,6 @@ class TestS3FileStorageDelete:
             storage.delete("test-bucket", "test-key")
 
 
-class TestS3FileStoragePresignedUrl:
-    def test_get_presigned_url_success(self) -> None:
-        client = MagicMock()
-        client.generate_presigned_url.return_value = "https://presigned-url"
-        storage = S3FileStorage(s3_client=client)
-
-        url = storage.get_presigned_url("test-bucket", "test-key", 7200)
-
-        assert url == "https://presigned-url"
-        client.generate_presigned_url.assert_called_once()
-
-    def test_get_presigned_url_error(self) -> None:
-        client = MagicMock()
-        client.generate_presigned_url.side_effect = ClientError(
-            {"Error": {"Code": "InternalError"}},
-            "GeneratePresignedUrl",
-        )
-        storage = S3FileStorage(s3_client=client)
-
-        with pytest.raises(StorageError):
-            storage.get_presigned_url("test-bucket", "test-key")
-
-
 class TestS3FileStorageCopy:
     @pytest.fixture
     def storage(self) -> S3FileStorage:

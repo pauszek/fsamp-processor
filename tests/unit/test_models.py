@@ -33,23 +33,6 @@ class TestProcessingResult:
         assert result.status == ProcessingStatus.IN_PROGRESS
         assert result.completed_at is None
 
-    def test_is_success(self) -> None:
-        success = ProcessingResult(
-            event_id="1",
-            correlation_id="1",
-            status=ProcessingStatus.COMPLETED,
-            started_at=datetime.utcnow(),
-        )
-        failed = ProcessingResult(
-            event_id="2",
-            correlation_id="2",
-            status=ProcessingStatus.FAILED,
-            started_at=datetime.utcnow(),
-        )
-
-        assert success.is_success is True
-        assert failed.is_success is False
-
     def test_with_completion(self) -> None:
         original = ProcessingResult(
             event_id="event-1",
@@ -93,7 +76,6 @@ class TestProcessingResult:
         )
 
         assert result.duration_ms is None
-        assert result.is_failure is False
 
     def test_with_completion_preserves_retry_and_merges_metadata(self) -> None:
         original = ProcessingResult(
@@ -112,7 +94,7 @@ class TestProcessingResult:
             metadata={"attempt": 3},
         )
 
-        assert failed.is_failure is True
+        assert failed.status is ProcessingStatus.FAILED
         assert failed.retry_count == 2
         assert failed.error_message == "boom"
         assert failed.error_code == "PROCESSING_FAILED"
@@ -354,21 +336,6 @@ class TestOutboxEvent:
         assert event.status == OutboxStatus.PENDING
         assert event.retry_count == 2
         assert event.ttl == 123456
-
-    def test_from_dynamodb_stream_record_requires_new_image(self) -> None:
-        with pytest.raises(ValueError, match="No NewImage"):
-            OutboxEvent.from_dynamodb_stream_record({"dynamodb": {}})
-
-    def test_from_dynamodb_stream_record_reads_new_image(self) -> None:
-        item = OutboxEvent.create(
-            event_type=OutboxEventType.ANALYSIS_COMPLETED,
-            aggregate_id="file-123",
-            payload={"fileId": "file-123"},
-        ).to_dynamodb_item()
-
-        event = OutboxEvent.from_dynamodb_stream_record({"dynamodb": {"NewImage": item}})
-
-        assert event.aggregate_id == "file-123"
 
     def test_mark_published_and_failed_update_status_fields(self) -> None:
         event = OutboxEvent.create(

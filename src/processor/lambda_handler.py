@@ -1,19 +1,4 @@
-"""
-AWS Lambda handler for FSAMP Processor.
-
-This module provides the Lambda entry point that:
-1. Receives SQS events (batch of messages)
-2. Processes each message using the FileProcessorService
-3. Reports batch item failures for partial batch response
-
-Uses AWS Lambda Powertools for:
-- Structured logging with correlation IDs
-- Distributed tracing (X-Ray)
-- Metrics collection (CloudWatch EMF)
-- Batch processing utilities
-
-Implements Outbox Pattern for reliable event publishing.
-"""
+"""SQS-triggered Lambda entry point with partial batch failure reporting."""
 
 from __future__ import annotations
 
@@ -67,12 +52,7 @@ _settings: Settings | None = None
 
 
 def get_file_processor() -> FileProcessorService:
-    """
-    Get or create the FileProcessorService singleton.
-
-    Uses Lambda execution context reuse for warm starts.
-    Components are created once and reused across invocations.
-    """
+    """Build the service once per execution context and reuse it on warm starts."""
     global _file_processor, _settings
 
     if _file_processor is not None:
@@ -144,21 +124,7 @@ def get_file_processor() -> FileProcessorService:
 
 @tracer.capture_method
 def record_handler(record: SQSRecord) -> dict[str, Any]:
-    """
-    Process a single SQS record.
-
-    This function is called by the batch processor for each message.
-    It parses the message, processes the file event, and returns the result.
-
-    Args:
-        record: SQS record from the batch.
-
-    Returns:
-        Processing result dictionary.
-
-    Raises:
-        Exception: If processing fails (will be reported as batch item failure).
-    """
+    """Process one SQS record; raising marks it as a batch item failure."""
     message_id = record.message_id
     start_time = time.time()
 
@@ -284,26 +250,7 @@ def record_handler(record: SQSRecord) -> dict[str, Any]:
 @metrics.log_metrics(capture_cold_start_metric=True)
 @batch_processor(record_handler=record_handler, processor=processor)  # type: ignore[untyped-decorator]
 def lambda_handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
-    """
-    AWS Lambda handler for SQS-triggered file processing.
-
-    This handler:
-    1. Receives a batch of SQS messages
-    2. Processes each message using record_handler
-    3. Returns batch item failures for partial batch response
-
-    The @batch_processor decorator handles:
-    - Iterating through SQS records
-    - Error handling per record
-    - Building partial batch response
-
-    Args:
-        event: Lambda event (SQS batch)
-        context: Lambda context
-
-    Returns:
-        Response with batchItemFailures for failed messages
-    """
+    """Handle one SQS batch and return its batchItemFailures response."""
     records = event.get("Records", [])
     logger.info(
         "Processing SQS batch",

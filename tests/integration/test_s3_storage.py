@@ -79,17 +79,3 @@ class TestS3FileStorage:
         )
 
         assert storage.exists(localstack_bucket, object_key) is True
-
-    def test_presigned_url_generation(self, storage: S3FileStorage, localstack_bucket: str) -> None:
-        object_key = "test/presigned.txt"
-        storage.upload(localstack_bucket, object_key, b"presigned content")
-
-        url = storage.get_presigned_url(
-            bucket_name=localstack_bucket,
-            object_key=object_key,
-            expiration_seconds=3600,
-        )
-
-        assert url is not None
-        assert localstack_bucket in url
-        assert object_key in url

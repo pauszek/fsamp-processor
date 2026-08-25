@@ -228,41 +228,6 @@ class TestKMSCryptoProviderVerifyKeyAccess:
         assert result is False
 
 
-class TestKMSCryptoProviderGetKeyMetadata:
-    def test_get_key_metadata_success(self) -> None:
-        client = MagicMock()
-        client.describe_key.return_value = {
-            "KeyMetadata": {
-                "KeyId": "test-key-id",
-                "Arn": "arn:aws:kms:us-west-2:123456789012:key/test",
-                "KeyState": "Enabled",
-                "KeyUsage": "ENCRYPT_DECRYPT",
-                "KeySpec": "SYMMETRIC_DEFAULT",
-                "EncryptionAlgorithms": ["SYMMETRIC_DEFAULT"],
-                "CreationDate": "2024-01-01T00:00:00Z",
-            }
-        }
-        provider = KMSCryptoProvider(kms_client=client, key_id="test-key")
-
-        metadata = provider.get_key_metadata()
-
-        assert metadata["key_id"] == "test-key-id"
-        assert metadata["key_state"] == "Enabled"
-        assert metadata["key_usage"] == "ENCRYPT_DECRYPT"
-
-    def test_get_key_metadata_error(self) -> None:
-        client = MagicMock()
-        client.describe_key.side_effect = ClientError(
-            {"Error": {"Code": "NotFoundException"}},
-            "DescribeKey",
-        )
-        provider = KMSCryptoProvider(kms_client=client, key_id="test-key")
-
-        metadata = provider.get_key_metadata()
-
-        assert metadata == {}
-
-
 class TestLocalCryptoProviderInit:
     def test_init_with_static_key(self) -> None:
         static_key = b"0" * 32

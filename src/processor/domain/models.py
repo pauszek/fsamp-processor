@@ -85,16 +85,6 @@ class ProcessingResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
-    def is_success(self) -> bool:
-        """Check if processing was successful."""
-        return self.status == ProcessingStatus.COMPLETED
-
-    @property
-    def is_failure(self) -> bool:
-        """Check if processing failed."""
-        return self.status == ProcessingStatus.FAILED
-
-    @property
     def duration_ms(self) -> int | None:
         """Calculate processing duration in milliseconds."""
         if self.completed_at is None:
@@ -457,14 +447,6 @@ class OutboxEvent:
                 else None
             ),
         )
-
-    @classmethod
-    def from_dynamodb_stream_record(cls, record: dict[str, Any]) -> OutboxEvent:
-        """Create from DynamoDB Streams record (NewImage format)."""
-        new_image = record.get("dynamodb", {}).get("NewImage", {})
-        if not new_image:
-            raise ValueError("No NewImage in DynamoDB stream record")
-        return cls.from_dynamodb_item(new_image)
 
     def mark_published(
         self,

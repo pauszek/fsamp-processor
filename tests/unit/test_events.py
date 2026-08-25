@@ -137,14 +137,6 @@ class TestStorageLocation:
         assert location.bucket_name == "my-bucket"
         assert location.object_key == "path/to/file.pdf"
 
-    def test_s3_uri_property(self) -> None:
-        location = StorageLocation(
-            bucket_name="fsamp-files",
-            object_key="uploads/2024/doc.pdf",
-        )
-
-        assert location.s3_uri == "s3://fsamp-files/uploads/2024/doc.pdf"
-
     def test_location_from_camel_case(self) -> None:
         location = StorageLocation.model_validate(
             {

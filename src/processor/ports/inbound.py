@@ -74,15 +74,3 @@ class MessageConsumer(ABC):
             requeue: Whether to requeue the message for retry.
         """
         ...
-
-
-class HealthCheck(Protocol):
-    """Port for health check endpoints."""
-
-    def is_healthy(self) -> bool:
-        """Check if the service is healthy."""
-        ...
-
-    def get_status(self) -> dict[str, str]:
-        """Get detailed health status."""
-        ...

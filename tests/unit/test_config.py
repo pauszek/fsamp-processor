@@ -8,7 +8,6 @@ def test_environment_and_log_level_are_normalized() -> None:
 
     assert settings.environment == "prod"
     assert settings.log_level == "DEBUG"
-    assert settings.is_production is True
 
 
 def test_non_string_validator_inputs_are_returned_unchanged() -> None:

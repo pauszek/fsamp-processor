@@ -7,7 +7,6 @@ from abc import ABC, abstractmethod
 
 from processor.domain.events import FileEvent
 from processor.domain.models import (
-    AnalysisResult,
     FileContent,
     MetadataRecord,
     OutboxEvent,
@@ -109,29 +108,6 @@ class FileStorage(ABC):
         """
         ...
 
-    @abstractmethod
-    def get_presigned_url(
-        self,
-        bucket_name: str,
-        object_key: str,
-        expiration_seconds: int = 3600,
-    ) -> str:
-        """
-        Generate a presigned URL for downloading a file.
-
-        Args:
-            bucket_name: The name of the bucket.
-            object_key: The key (path) of the object.
-            expiration_seconds: URL expiration time in seconds.
-
-        Returns:
-            The presigned URL.
-
-        Raises:
-            StorageError: If URL generation fails.
-        """
-        ...
-
 
 class MetadataRepository(ABC):
     """
@@ -182,70 +158,6 @@ class MetadataRepository(ABC):
         """
         ...
 
-    @abstractmethod
-    def get_history(self, file_id: str, limit: int = 10) -> list[MetadataRecord]:
-        """
-        Get the current metadata snapshot for a file.
-
-        The canonical metadata layout stores one ``FILE#id/METADATA`` item, so
-        implementations return either an empty list or a single current record.
-        The method name is retained for backward compatibility.
-
-        Args:
-            file_id: The file ID (partition key).
-            limit: Set to zero or less to suppress the result.
-
-        Returns:
-            A list containing at most the current metadata record.
-
-        Raises:
-            StorageError: If retrieval fails.
-        """
-        ...
-
-    @abstractmethod
-    def update_status(
-        self,
-        file_id: str,
-        timestamp: str,
-        status: str,
-        error_message: str | None = None,
-    ) -> None:
-        """
-        Update the status of a metadata record.
-
-        Args:
-            file_id: The file ID (partition key).
-            timestamp: The timestamp (sort key).
-            status: The new status.
-            error_message: Optional error message.
-
-        Raises:
-            StorageError: If update fails.
-        """
-        ...
-
-    @abstractmethod
-    def query_by_status(
-        self,
-        status: str,
-        limit: int = 100,
-    ) -> list[MetadataRecord]:
-        """
-        Query metadata records by status (requires GSI).
-
-        Args:
-            status: The status to filter by.
-            limit: Maximum number of records to return.
-
-        Returns:
-            List of metadata records.
-
-        Raises:
-            StorageError: If query fails.
-        """
-        ...
-
 
 class EventPublisher(ABC):
     """
@@ -263,22 +175,6 @@ class EventPublisher(ABC):
 
         Returns:
             The message ID.
-
-        Raises:
-            MessageError: If publishing fails.
-        """
-        ...
-
-    @abstractmethod
-    def publish_batch(self, events: list[FileEvent]) -> list[str]:
-        """
-        Publish multiple events in a batch.
-
-        Args:
-            events: List of events to publish.
-
-        Returns:
-            List of message IDs.
 
         Raises:
             MessageError: If publishing fails.
@@ -364,76 +260,6 @@ class CryptoProvider(ABC):
         ...
 
 
-class FileAnalyzer(ABC):
-    """
-    Port for file analysis/scanning.
-    Implemented by adapters for virus scanning, content analysis, etc.
-    """
-
-    @abstractmethod
-    def analyze(self, content: FileContent) -> AnalysisResult:
-        """
-        Analyze file content for security threats and metadata.
-
-        Args:
-            content: The file content to analyze.
-
-        Returns:
-            AnalysisResult with findings.
-
-        Raises:
-            ProcessingError: If analysis fails.
-        """
-        ...
-
-
-class MetricsCollector(ABC):
-    """
-    Port for collecting metrics.
-    Implemented by adapters like CloudWatch Metrics.
-    """
-
-    @abstractmethod
-    def increment_counter(
-        self,
-        name: str,
-        value: int = 1,
-        dimensions: dict[str, str] | None = None,
-    ) -> None:
-        """Increment a counter metric."""
-        ...
-
-    @abstractmethod
-    def record_gauge(
-        self,
-        name: str,
-        value: float,
-        dimensions: dict[str, str] | None = None,
-    ) -> None:
-        """Record a gauge metric."""
-        ...
-
-    @abstractmethod
-    def record_histogram(
-        self,
-        name: str,
-        value: float,
-        dimensions: dict[str, str] | None = None,
-    ) -> None:
-        """Record a histogram/timing metric."""
-        ...
-
-    @abstractmethod
-    def record_processing_time(
-        self,
-        duration_ms: int,
-        status: str,
-        event_type: str,
-    ) -> None:
-        """Record file processing time."""
-        ...
-
-
 class OutboxRepository(ABC):
     """
     Port for Outbox Pattern persistence.
@@ -462,28 +288,6 @@ class OutboxRepository(ABC):
 
         Raises:
             StorageError: If save fails.
-        """
-        ...
-
-    @abstractmethod
-    def get_pending_events(
-        self,
-        limit: int = 100,
-    ) -> list[OutboxEvent]:
-        """
-        Get pending outbox events for publishing.
-
-        Used by the outbox publisher to fetch events that need
-        to be published to the message broker.
-
-        Args:
-            limit: Maximum number of events to return.
-
-        Returns:
-            List of pending outbox events, oldest first.
-
-        Raises:
-            StorageError: If query fails.
         """
         ...
 
@@ -528,48 +332,5 @@ class OutboxRepository(ABC):
 
         Raises:
             StorageError: If update fails.
-        """
-        ...
-
-    @abstractmethod
-    def get_failed_events(
-        self,
-        limit: int = 100,
-    ) -> list[OutboxEvent]:
-        """
-        Get failed outbox events for retry.
-
-        Used to retrieve events that failed to publish for retry.
-
-        Args:
-            limit: Maximum number of events to return.
-
-        Returns:
-            List of failed outbox events.
-
-        Raises:
-            StorageError: If query fails.
-        """
-        ...
-
-    @abstractmethod
-    def delete_old_published(
-        self,
-        older_than_hours: int = 24,
-    ) -> int:
-        """
-        Delete old published events (cleanup).
-
-        DynamoDB TTL should handle this automatically, but this
-        provides manual cleanup capability.
-
-        Args:
-            older_than_hours: Delete events older than this.
-
-        Returns:
-            Number of deleted events.
-
-        Raises:
-            StorageError: If deletion fails.
         """
         ...

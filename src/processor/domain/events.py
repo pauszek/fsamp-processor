@@ -143,11 +143,6 @@ class StorageLocation(BaseModel):
             raise ValueError("bucketName must not be formatted as an IPv4 address")
         return value
 
-    @property
-    def s3_uri(self) -> str:
-        """Return the full S3 URI."""
-        return f"s3://{self.bucket_name}/{self.object_key}"
-
 
 class SecurityContext(BaseModel):
     """
